@@ -53,18 +53,17 @@ let create ~__context ~pIF ~cluster_stack ~pool_auto_join ~token_timeout
       let ip_addr = ip_of_pif (pIF, pifrec) in
       let hostuuid = Inventory.lookup Inventory._installation_uuid in
       let hostname = Db.Host.get_hostname ~__context ~self:host in
+      let open Cluster_interface in
       let member =
         if Xapi_cluster_helpers.cluster_health_enabled ~__context then
-          Cluster_interface.(
-            Extended
-              {
-                ip= Ipaddr.of_string_exn (ipstr_of_address ip_addr)
-              ; hostuuid
-              ; hostname
-              }
-          )
+          Extended
+            {
+              ip= Ipaddr.of_string_exn (ipstr_of_address ip_addr)
+            ; hostuuid
+            ; hostname
+            }
         else
-          Cluster_interface.(IPv4 (ipstr_of_address ip_addr))
+          IPv4 (ipstr_of_address ip_addr)
       in
       let token_timeout_ms = Int64.of_float (token_timeout *. 1000.0) in
       let token_timeout_coefficient_ms =
@@ -72,10 +71,11 @@ let create ~__context ~pIF ~cluster_stack ~pool_auto_join ~token_timeout
       in
       let init_config =
         {
-          Cluster_interface.member
+          member
         ; token_timeout_ms= Some token_timeout_ms
         ; token_coefficient_ms= Some token_timeout_coefficient_ms
         ; name= None
+        ; cluster_stack= Cluster_stack.of_string cluster_stack
         }
       in
       Xapi_clustering.Daemon.enable ~__context ;
