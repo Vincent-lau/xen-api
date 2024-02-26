@@ -349,6 +349,12 @@ let enable ~__context ~self =
         else
           Cluster_interface.(IPv4 (ipstr_of_address ip_addr))
       in
+      let cluster_ref = Db.Cluster_host.get_cluster ~__context ~self in
+      let cluster_stack =
+        Db.Cluster.get_cluster_stack ~__context ~self:cluster_ref
+      in
+      assert_cluster_stack_valid ~cluster_stack ;
+
       (* TODO: Pass these through from CLI *)
       if not !Xapi_clustering.Daemon.enabled then (
         D.debug
@@ -360,12 +366,14 @@ let enable ~__context ~self =
         Xapi_observer_components.Xapi_clusterd ;
       let verify = Stunnel_client.get_verify_by_default () in
       set_tls_config ~__context ~self ~verify ;
+      let open Cluster_interface in
       let init_config =
         {
-          Cluster_interface.member
+          member
         ; token_timeout_ms= None
         ; token_coefficient_ms= None
         ; name= None
+        ; cluster_stack= Cluster_stack.of_string cluster_stack
         }
       in
       let result =

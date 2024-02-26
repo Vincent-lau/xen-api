@@ -71,6 +71,47 @@ type node = {addr: address; id: nodeid} [@@deriving rpcty]
 
 type all_members = node list [@@deriving rpcty]
 
+module Cluster_stack = struct
+  exception Unsupported_Cluster_stack of string
+
+  exception Unsupported_transport of string
+
+  type t = Corosync | Corosync3 [@@deriving rpcty]
+
+  type transport = Udpu | Knet [@@deriving rpcty]
+
+  let transport_to_stack = function Udpu -> Corosync | Knet -> Corosync3
+
+  let transport_of_string = function
+    | "udpu" ->
+        Udpu
+    | "knet" ->
+        Knet
+    | s ->
+        raise (Unsupported_transport s)
+
+  let transport_to_string = function
+      | Udpu -> "udpu"
+      | Knet -> "knet"
+
+  let cluster_stack_to_transport = function
+      | Corosync -> Udpu
+      | Corosync3 -> Knet
+
+  let cluster_stack_of_transport ts =
+    ts |> transport_of_string |> transport_to_stack
+
+  let of_string = function
+    | "corosync" ->
+        Corosync
+    | "corosync3" ->
+        Corosync3
+    | s ->
+        raise (Unsupported_Cluster_stack s)
+
+  let default_smapiv3_cluster_stack = of_string Constants.default_smapiv3_cluster_stack
+end
+
 (** This type contains all of the information required to initialise the
     cluster. All optional params will have the recommended defaults if None. *)
 type init_config = {
@@ -78,6 +119,7 @@ type init_config = {
   ; token_timeout_ms: int64 option
   ; token_coefficient_ms: int64 option
   ; name: string option
+  ; cluster_stack: Cluster_stack.t
 }
 [@@deriving rpcty]
 
@@ -92,6 +134,7 @@ type cluster_config = {
   ; config_version: int64
   ; cluster_token_timeout_ms: int64
   ; cluster_token_coefficient_ms: int64
+  ; cluster_stack: Cluster_stack.t
 }
 [@@deriving rpcty]
 
