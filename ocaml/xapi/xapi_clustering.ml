@@ -150,6 +150,8 @@ let assert_cluster_stack_valid ~cluster_stack =
   if not (List.mem cluster_stack Constants.supported_smapiv3_cluster_stacks)
   then
     raise Api_errors.(Server_error (invalid_cluster_stack, [cluster_stack]))
+  else if cluster_stack = "corosync" then
+    raise Api_errors.(Server_error (deprecated_cluster_stack, [cluster_stack]))
 
 let with_clustering_lock_if_needed ~__context ~sr_sm_type where f =
   match get_required_cluster_stacks ~__context ~sr_sm_type with

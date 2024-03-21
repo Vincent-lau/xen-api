@@ -64,8 +64,11 @@ let create =
            param_type= String
          ; param_name= "cluster_stack"
          ; param_doc=
-             "simply the string 'corosync'. No other cluster stacks are \
-              currently supported"
+             "Currently only corosync is used as the cluster stack. Both \
+              corosync and corosync3 are supported. Note that corosync \
+              corresponds to corosync2, but is included only for backwards \
+              compatability. It is an error to start the cluster with \
+              cluster_stack=corosync)"
          ; param_release= kolkata_release
          ; param_default= None
          }
@@ -86,6 +89,7 @@ let create =
       Api_errors.
         [
           invalid_cluster_stack
+        ; deprecated_cluster_stack
         ; invalid_value
         ; pif_allows_unplug
         ; required_pif_is_unplugged
@@ -129,8 +133,11 @@ let pool_create =
            param_type= String
          ; param_name= "cluster_stack"
          ; param_doc=
-             "simply the string 'corosync'. No other cluster stacks are \
-              currently supported"
+             "Currently only corosync is used as the cluster stack. Both \
+              corosync and corosync3 are supported. Note that corosync \
+              corresponds to corosync2, but is included only for backwards \
+              compatability. It is an error to start the cluster with \
+              cluster_stack=corosync)"
          ; param_release= kolkata_release
          ; param_default= None
          }
@@ -192,8 +199,11 @@ let t =
        ; field ~qualifier:StaticRO ~lifecycle ~ty:String "cluster_stack"
            ~default_value:
              (Some (VString Constants.default_smapiv3_cluster_stack))
-           "Simply the string 'corosync'. No other cluster stacks are \
-            currently supported"
+           "Currently only corosync is used as the cluster stack. Both \
+            corosync and corosync3 are supported. Note that corosync \
+            corresponds to  corosync2, but is included only for backwards \
+            compatability. It is an error to start the cluster with \
+            cluster_stack=corosync)"
        ; field ~qualifier:DynamicRO ~lifecycle:[] ~ty:Bool "is_quorate"
            ~default_value:(Some (VBool false))
            "Whether the cluster stack thinks the cluster is quorate"

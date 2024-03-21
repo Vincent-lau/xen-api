@@ -1857,6 +1857,11 @@ let _ =
     ~doc:"The cluster stack is still in use by at least one plugged PBD." () ;
   error Api_errors.invalid_cluster_stack ["cluster_stack"]
     ~doc:"The cluster stack provided is not supported." () ;
+  error Api_errors.deprecated_cluster_stack ["cluster_stack"]
+    ~doc:
+      "The cluster stack corosync is deprecated and can no longer be used to \
+       create cluster, please use corosync3 instead."
+    () ;
   error Api_errors.pif_not_attached_to_host ["pif"; "host"]
     ~doc:
       "Cluster_host creation failed as the PIF provided is not attached to the \

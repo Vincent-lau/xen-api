@@ -1211,6 +1211,8 @@ let cluster_stack_in_use = "CLUSTER_STACK_IN_USE"
 
 let invalid_cluster_stack = "INVALID_CLUSTER_STACK"
 
+let deprecated_cluster_stack = "DEPRECATED_CLUSTER_STACK"
+
 let pif_not_attached_to_host = "PIF_NOT_ATTACHED_TO_HOST"
 
 let cluster_host_not_joined = "CLUSTER_HOST_NOT_JOINED"
