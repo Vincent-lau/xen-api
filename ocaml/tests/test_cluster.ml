@@ -53,7 +53,7 @@ let test_clusterd_rpc ~__context call =
         ; config_version= 1L
         ; cluster_token_timeout_ms= 20000L
         ; cluster_token_coefficient_ms= 1000L
-        ; cluster_stack = Cluster_stack.default_smapiv3_cluster_stack
+        ; cluster_stack= Cluster_stack.default_smapiv3_cluster_stack
         }
       in
       let diag =
@@ -141,6 +141,15 @@ let test_invalid_parameters () =
     "Cluster.create should fail upon receiving an invalid cluster stack"
     Api_errors.(Server_error (invalid_cluster_stack, [cluster_stack]))
     (fun () -> create_cluster ~__context ~cluster_stack () |> ignore) ;
+  let corosync2_cluster_stack = "corosync" in
+  Alcotest.check_raises "Cluster.create should fail upon receiving corosync"
+    Api_errors.(
+      Server_error (deprecated_cluster_stack, [corosync2_cluster_stack])
+    )
+    (fun () ->
+      create_cluster ~__context ~cluster_stack:corosync2_cluster_stack ()
+      |> ignore
+    ) ;
   Alcotest.check_raises "token_timeout < minimum threshold"
     Api_errors.(Server_error (invalid_value, ["token_timeout"; "0.5"]))
     (fun () -> create_cluster ~__context ~token_timeout:0.5 () |> ignore) ;
