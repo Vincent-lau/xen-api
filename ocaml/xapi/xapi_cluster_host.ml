@@ -83,8 +83,10 @@ let get_corosync_version () =
     | Some (_left, version) -> (
       match Astring.String.with_range ~first:1 ~len:1 version with
       | "2" ->
+          debug "Currently using corosync2";
           Cluster_stack.Corosync
       | "3" ->
+          debug "Currently using corosync3";
           Cluster_stack.Corosync3
       | mv ->
           handle_error
@@ -106,9 +108,10 @@ let maybe_switch_cluster_stack_version ~cluster_stack =
     match get_corosync_version () with
     | Cluster_stack.Corosync -> (
       try
-        ignore
-        @@ Forkhelpers.execute_command_get_output
-             "/usr/libexec/set-system-corosync-version" ["3"]
+        let out, _err =  
+        Forkhelpers.execute_command_get_output
+             "/usr/libexec/set-system-corosync-version" ["3"] in
+        debug "%s: switched to corosync3 %s" __FUNCTION__ out
       with Forkhelpers.Spawn_internal_error (out, err, _status) ->
         Unix_error
           (Printf.sprintf "failed to switch corosync version out: %s, err :%s"
