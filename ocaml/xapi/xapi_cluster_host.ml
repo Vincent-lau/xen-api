@@ -70,57 +70,7 @@ let alert_for_cluster_host_join ~__context ~cluster_host =
   alert_for_cluster_host ~__context ~cluster_host ~missing_hosts:[]
     ~new_hosts:[cluster_host]
 
-let get_corosync_version () =
-  (* example output corosync -v
-     Corosync Cluster Engine, version '2.4.6'
-     Copyright (c) 2006-2009 Red Hat, Inc.
-  *)
-  try
-    let out, _err =
-      Forkhelpers.execute_command_get_output "/usr/sbin/corosync" ["-v"]
-    in
-    match Astring.String.cut ~sep:"version " out with
-    | Some (_left, version) -> (
-      match Astring.String.with_range ~first:1 ~len:1 version with
-      | "2" ->
-          debug "Currently using corosync2";
-          Cluster_stack.Corosync
-      | "3" ->
-          debug "Currently using corosync3";
-          Cluster_stack.Corosync3
-      | mv ->
-          handle_error
-            (InternalError
-               (Printf.sprintf "invalid corosync version number %s" mv)
-            )
-    )
-    | None ->
-        handle_error (InternalError "cannot parse corosync -v")
-  with Forkhelpers.Spawn_internal_error (out, err, _status) ->
-    Unix_error
-      (Printf.sprintf "failed to switch corosync version out: %s, err :%s" out
-         err
-      )
-    |> handle_error
 
-let maybe_switch_cluster_stack_version ~cluster_stack =
-  if cluster_stack = "corosync3" then
-    match get_corosync_version () with
-    | Cluster_stack.Corosync -> (
-      try
-        let out, _err =  
-        Forkhelpers.execute_command_get_output
-             "/usr/libexec/set-system-corosync-version" ["3"] in
-        debug "%s: switched to corosync3 %s" __FUNCTION__ out
-      with Forkhelpers.Spawn_internal_error (out, err, _status) ->
-        Unix_error
-          (Printf.sprintf "failed to switch corosync version out: %s, err :%s"
-             out err
-          )
-        |> handle_error
-    )
-    | _ ->
-        debug "already running corosync3, no need to switch"
 
 (* Create xapi db object for cluster_host, resync_host calls clusterd *)
 let create_internal ~__context ~cluster ~host ~pIF : API.ref_Cluster_host =

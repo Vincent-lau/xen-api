@@ -35,6 +35,7 @@ let validate_params ~token_timeout ~token_timeout_coefficient =
 let create ~__context ~pIF ~cluster_stack ~pool_auto_join ~token_timeout
     ~token_timeout_coefficient =
   assert_cluster_stack_valid ~cluster_stack ;
+  maybe_switch_cluster_stack_version ~cluster_stack;
   (* Currently we only support corosync. If we support more cluster stacks, this
    * should be replaced by a general function that checks the given cluster_stack *)
   Pool_features.assert_enabled ~__context ~f:Features.Corosync ;
