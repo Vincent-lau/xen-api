@@ -90,13 +90,13 @@ module Cluster_stack = struct
     | s ->
         raise (Unsupported_transport s)
 
-  let transport_to_string = function
-      | Udpu -> "udpu"
-      | Knet -> "knet"
+  let transport_to_string = function Udpu -> "udpu" | Knet -> "knet"
 
   let cluster_stack_to_transport = function
-      | Corosync -> Udpu
-      | Corosync3 -> Knet
+    | Corosync ->
+        Udpu
+    | Corosync3 ->
+        Knet
 
   let cluster_stack_of_transport ts =
     ts |> transport_of_string |> transport_to_stack
@@ -109,7 +109,8 @@ module Cluster_stack = struct
     | s ->
         raise (Unsupported_Cluster_stack s)
 
-  let default_smapiv3_cluster_stack = of_string Constants.default_smapiv3_cluster_stack
+  let default_smapiv3_cluster_stack =
+    of_string Constants.default_smapiv3_cluster_stack
 end
 
 (** This type contains all of the information required to initialise the
