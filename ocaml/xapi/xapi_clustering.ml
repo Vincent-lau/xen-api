@@ -180,25 +180,30 @@ let get_corosync_version () =
       )
     |> handle_error
 
-let maybe_switch_cluster_stack_version ~cluster_stack =
-  if cluster_stack = "corosync3" then
-    match get_corosync_version () with
-    | Cluster_stack.Corosync -> (
-      try
-        let out, _err =
-          Forkhelpers.execute_command_get_output
-            "/usr/libexec/set-system-corosync-version" ["3"]
-        in
-        debug "%s: switched to corosync3 %s" __FUNCTION__ out
-      with Forkhelpers.Spawn_internal_error (out, err, _status) ->
-        Unix_error
-          (Printf.sprintf "failed to switch corosync version out: %s, err :%s"
-             out err
-          )
-        |> handle_error
+let maybe_switch_cluster_stack_version ~__context ~cluster_stack =
+  match Context.get_test_clusterd_rpc __context with
+  | Some _ ->
+      debug "in unit test, not switching cluster stack verion"
+  | None -> (
+      if cluster_stack = "corosync3" then
+        match get_corosync_version () with
+        | Cluster_stack.Corosync -> (
+          try
+            let out, _err =
+              Forkhelpers.execute_command_get_output
+                "/usr/libexec/set-system-corosync-version" ["3"]
+            in
+            debug "%s: switched to corosync3 %s" __FUNCTION__ out
+          with Forkhelpers.Spawn_internal_error (out, err, _status) ->
+            Unix_error
+              (Printf.sprintf
+                 "failed to switch corosync version out: %s, err :%s" out err
+              )
+            |> handle_error
+        )
+        | _ ->
+            debug "already running corosync3, no need to switch"
     )
-    | _ ->
-        debug "already running corosync3, no need to switch"
 
 let assert_cluster_stack_valid ~cluster_stack =
   if not (List.mem cluster_stack Constants.supported_smapiv3_cluster_stacks)

@@ -81,7 +81,7 @@ let create_internal ~__context ~cluster ~host ~pIF : API.ref_Cluster_host =
       let cluster_stack =
         Db.Cluster.get_cluster_stack ~__context ~self:cluster
       in
-      maybe_switch_cluster_stack_version ~cluster_stack ;
+      maybe_switch_cluster_stack_version ~__context ~cluster_stack ;
       let ref = Ref.make () in
       let uuid = Uuidx.(to_string (make ())) in
       Db.Cluster_host.create ~__context ~ref ~uuid ~cluster ~host ~pIF
