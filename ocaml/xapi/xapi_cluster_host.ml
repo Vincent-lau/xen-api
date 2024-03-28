@@ -70,18 +70,16 @@ let alert_for_cluster_host_join ~__context ~cluster_host =
   alert_for_cluster_host ~__context ~cluster_host ~missing_hosts:[]
     ~new_hosts:[cluster_host]
 
-
-
 (* Create xapi db object for cluster_host, resync_host calls clusterd *)
 let create_internal ~__context ~cluster ~host ~pIF : API.ref_Cluster_host =
   with_clustering_lock __LOC__ (fun () ->
       assert_operation_host_target_is_localhost ~__context ~host ;
       assert_pif_attached_to ~host ~pIF ~__context ;
       assert_cluster_host_can_be_created ~__context ~host ;
-      let cluster_stack =
-        Db.Cluster.get_cluster_stack ~__context ~self:cluster
+      let cluster_stack_version =
+        Db.Cluster.get_cluster_stack_version ~__context ~self:cluster
       in
-      maybe_switch_cluster_stack_version ~__context ~cluster_stack ;
+      maybe_switch_cluster_stack_version ~__context ~cluster_stack_version ;
       let ref = Ref.make () in
       let uuid = Uuidx.(to_string (make ())) in
       Db.Cluster_host.create ~__context ~ref ~uuid ~cluster ~host ~pIF
@@ -361,6 +359,9 @@ let enable ~__context ~self =
         Db.Cluster.get_cluster_stack ~__context ~self:cluster_ref
       in
       assert_cluster_stack_valid ~cluster_stack ;
+      let cluster_stack_version =
+        Db.Cluster.get_cluster_stack_version ~__context ~self:cluster_ref
+      in
 
       (* TODO: Pass these through from CLI *)
       if not !Xapi_clustering.Daemon.enabled then (
@@ -380,7 +381,7 @@ let enable ~__context ~self =
         ; token_timeout_ms= None
         ; token_coefficient_ms= None
         ; name= None
-        ; cluster_stack= Cluster_stack.of_string cluster_stack
+        ; cluster_stack= Cluster_stack.of_int64 cluster_stack_version
         }
       in
       let result =

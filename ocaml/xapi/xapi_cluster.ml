@@ -35,7 +35,15 @@ let validate_params ~token_timeout ~token_timeout_coefficient =
 let create ~__context ~pIF ~cluster_stack ~pool_auto_join ~token_timeout
     ~token_timeout_coefficient =
   assert_cluster_stack_valid ~cluster_stack ;
-  maybe_switch_cluster_stack_version ~__context ~cluster_stack;
+  let cluster_stack_version =
+    if Xapi_fist.allow_corosync2 () then
+      2L
+    else
+      3L
+  in
+  (* needed here in addtion to cluster_host.create_internal since the
+     Xapi_clustering.daemon.enable relies on the correct corosync verion *)
+  maybe_switch_cluster_stack_version ~__context ~cluster_stack_version ;
   (* Currently we only support corosync. If we support more cluster stacks, this
    * should be replaced by a general function that checks the given cluster_stack *)
   Pool_features.assert_enabled ~__context ~f:Features.Corosync ;
@@ -76,7 +84,7 @@ let create ~__context ~pIF ~cluster_stack ~pool_auto_join ~token_timeout
         ; token_timeout_ms= Some token_timeout_ms
         ; token_coefficient_ms= Some token_timeout_coefficient_ms
         ; name= None
-        ; cluster_stack= Cluster_stack.of_string cluster_stack
+        ; cluster_stack= Cluster_stack.of_int64 cluster_stack_version
         }
       in
       Xapi_clustering.Daemon.enable ~__context ;
@@ -87,8 +95,9 @@ let create ~__context ~pIF ~cluster_stack ~pool_auto_join ~token_timeout
       | Ok cluster_token ->
           D.debug "Got OK from LocalClient.create" ;
           Db.Cluster.create ~__context ~ref:cluster_ref ~uuid:cluster_uuid
-            ~cluster_token ~cluster_stack ~pending_forget:[] ~pool_auto_join
-            ~token_timeout ~token_timeout_coefficient ~current_operations:[]
+            ~cluster_token ~cluster_stack ~cluster_stack_version
+            ~pending_forget:[] ~pool_auto_join ~token_timeout
+            ~token_timeout_coefficient ~current_operations:[]
             ~allowed_operations:[] ~cluster_config:[] ~other_config:[]
             ~is_quorate:false ~quorum:0L ~live_hosts:0L ;
           Db.Cluster_host.create ~__context ~ref:cluster_host_ref

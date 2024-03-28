@@ -195,10 +195,10 @@ let redo_log_enabled = "redo_log.enabled"
 (* Valid cluster stack values *)
 let ha_cluster_stack = "ha_cluster_stack"
 
-let default_smapiv3_cluster_stack = "corosync3"
+let default_smapiv3_cluster_stack = "corosync"
 
 (* Note: default without clustering is in !Xapi_globs.default_cluster_stack *)
-let supported_smapiv3_cluster_stacks = ["corosync"; "corosync3"]
+let supported_smapiv3_cluster_stacks = ["corosync"]
 
 (* Set in the local db to cause us to emit an alert when we come up as a master after
    a transition or HA failover *)

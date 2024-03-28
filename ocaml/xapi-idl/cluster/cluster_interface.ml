@@ -72,15 +72,15 @@ type node = {addr: address; id: nodeid} [@@deriving rpcty]
 type all_members = node list [@@deriving rpcty]
 
 module Cluster_stack = struct
-  exception Unsupported_Cluster_stack of string
+  exception Unsupported_Cluster_stack of int64
 
   exception Unsupported_transport of string
 
-  type t = Corosync | Corosync3 [@@deriving rpcty]
+  type t = Corosync2 | Corosync3 [@@deriving rpcty]
 
   type transport = Udpu | Knet [@@deriving rpcty]
 
-  let transport_to_stack = function Udpu -> Corosync | Knet -> Corosync3
+  let transport_to_stack = function Udpu -> Corosync2 | Knet -> Corosync3
 
   let transport_of_string = function
     | "udpu" ->
@@ -93,7 +93,7 @@ module Cluster_stack = struct
   let transport_to_string = function Udpu -> "udpu" | Knet -> "knet"
 
   let cluster_stack_to_transport = function
-    | Corosync ->
+    | Corosync2 ->
         Udpu
     | Corosync3 ->
         Knet
@@ -101,16 +101,16 @@ module Cluster_stack = struct
   let cluster_stack_of_transport ts =
     ts |> transport_of_string |> transport_to_stack
 
-  let of_string = function
-    | "corosync" ->
-        Corosync
-    | "corosync3" ->
+  let of_int64 = function
+    | 2L ->
+        Corosync2
+    | 3L ->
         Corosync3
-    | s ->
-        raise (Unsupported_Cluster_stack s)
+    | n ->
+        raise (Unsupported_Cluster_stack n)
 
-  let default_smapiv3_cluster_stack =
-    of_string Constants.default_smapiv3_cluster_stack
+  (* let default_smapiv3_cluster_stack =
+     of_string Constants.default_smapiv3_cluster_stack *)
 end
 
 (** This type contains all of the information required to initialise the
