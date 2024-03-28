@@ -317,6 +317,8 @@ let _ =
       "The operation you requested cannot be performed because the specified \
        PIF allows unplug."
     () ;
+  error Api_errors.pif_not_in_cluster_network ["PIF"]
+    ~doc:"The pif provided is not in any of the networks used by the cluster" () ;
   error Api_errors.required_pif_is_unplugged ["PIF"]
     ~doc:
       "The operation you requested cannot be performed because the specified \
@@ -1857,11 +1859,6 @@ let _ =
     ~doc:"The cluster stack is still in use by at least one plugged PBD." () ;
   error Api_errors.invalid_cluster_stack ["cluster_stack"]
     ~doc:"The cluster stack provided is not supported." () ;
-  error Api_errors.deprecated_cluster_stack ["cluster_stack"]
-    ~doc:
-      "The cluster stack corosync is deprecated and can no longer be used to \
-       create cluster, please use corosync3 instead."
-    () ;
   error Api_errors.pif_not_attached_to_host ["pif"; "host"]
     ~doc:
       "Cluster_host creation failed as the PIF provided is not attached to the \
