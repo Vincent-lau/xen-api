@@ -15,6 +15,9 @@
 open Crc
 open Rrd_protocol
 
+module D = Debug.Make(struct let name = "rrd_protocol_v2" end)
+open D
+
 (* Field sizes. *)
 let default_header = Bytes.of_string "DATASOURCES"
 
@@ -211,6 +214,7 @@ let parse_metadata metadata =
     raise Invalid_payload
 
 let make_payload_reader () =
+  debug "rrd protocol v2 make_payload_reader";
   let last_data_crc = ref 0l in
   let last_metadata_crc = ref 0l in
   let cached_datasources : (Rrd.ds_owner * Ds.ds) list ref = ref [] in

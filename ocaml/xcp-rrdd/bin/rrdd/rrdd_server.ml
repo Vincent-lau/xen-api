@@ -735,16 +735,20 @@ module Plugin = struct
 
       let choose_protocol = function
         | Rrd_interface.V1 ->
+            debug "choose protocol v1";
             Rrd_protocol_v1.protocol
         | Rrd_interface.V2 ->
+            debug "choose protocol v2";
             Rrd_protocol_v2.protocol
 
       (* The function registers a plugin, and returns the number of seconds
          until the next reading phase for the specified sampling frequency. *)
       let register (uid : P.uid) (info : P.info)
           (protocol : Rrd_interface.plugin_protocol) : float =
+        debug "register plugin";
         with_lock registered_m (fun _ ->
             if not (Hashtbl.mem registered uid) then
+              debug "adding uid to hashtbl";
               let reader =
                 P.make_reader ~uid ~info ~protocol:(choose_protocol protocol)
               in
@@ -793,6 +797,7 @@ module Plugin = struct
         ~(protocol : Rrd_protocol.protocol) =
       let _ = info in
       (* this lie is used only to silence a warning *)
+      debug "calling filereader.create uid:%s" uid;
       Rrd_reader.FileReader.create (get_path_internal ~uid) protocol
   end)
 
@@ -800,7 +805,8 @@ module Plugin = struct
   let next_reading = Local.next_reading
 
   let register (uid : string) (frequency : Rrd.sampling_frequency) =
-    Local.register uid frequency Rrd_interface.V1
+    debug "uid %s using v2" uid;
+    Local.register uid frequency Rrd_interface.V2
 
   let deregister = Local.deregister
 
