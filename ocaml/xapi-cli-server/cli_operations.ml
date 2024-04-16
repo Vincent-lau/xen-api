@@ -7749,12 +7749,21 @@ end
 module Cluster = struct
   let pool_create printer rpc session_id params =
     let network_uuid = List.assoc "network-uuid" params in
+    let other_network_uuids =
+      List.assoc_opt "other-network-uuids" params
+      |> Option.fold ~none:[] ~some:(String.split_on_char ',')
+    in
     let cluster_stack =
       get_param params "cluster-stack"
         ~default:Constants.default_smapiv3_cluster_stack
     in
     let network =
       Client.Network.get_by_uuid ~rpc ~session_id ~uuid:network_uuid
+    in
+    let other_networks =
+      List.map
+        (fun uuid -> Client.Network.get_by_uuid ~rpc ~session_id ~uuid)
+        other_network_uuids
     in
     let token_timeout =
       get_float_param params "token-timeout"
@@ -7765,9 +7774,10 @@ module Cluster = struct
         ~default:Constants.default_token_timeout_coefficient_s
     in
     let cluster =
-      Client.Cluster.pool_create ~rpc ~session_id ~network ~cluster_stack
-        ~token_timeout ~token_timeout_coefficient
+      Client.Cluster.pool_create ~rpc ~session_id ~network ~other_networks
+        ~cluster_stack ~token_timeout ~token_timeout_coefficient
     in
+
     let uuid = Client.Cluster.get_uuid ~rpc ~session_id ~self:cluster in
     printer (Cli_printer.PList [uuid])
 
@@ -7794,7 +7804,16 @@ module Cluster = struct
 
   let create printer rpc session_id params =
     let pif_uuid = List.assoc "pif-uuid" params in
+    let other_pif_uuids =
+      List.assoc_opt "other-pif-uuids" params
+      |> Option.fold ~none:[] ~some:(String.split_on_char ',')
+    in
     let pIF = Client.PIF.get_by_uuid ~rpc ~session_id ~uuid:pif_uuid in
+    let other_PIFs =
+      List.map
+        (fun uuid -> Client.PIF.get_by_uuid ~rpc ~session_id ~uuid)
+        other_pif_uuids
+    in
     let cluster_stack =
       get_param params "cluster-stack"
         ~default:Constants.default_smapiv3_cluster_stack
@@ -7809,8 +7828,8 @@ module Cluster = struct
         ~default:Constants.default_token_timeout_coefficient_s
     in
     let cluster =
-      Client.Cluster.create ~rpc ~session_id ~pIF ~cluster_stack ~pool_auto_join
-        ~token_timeout ~token_timeout_coefficient
+      Client.Cluster.create ~rpc ~session_id ~pIF ~other_PIFs ~cluster_stack
+        ~pool_auto_join ~token_timeout ~token_timeout_coefficient
     in
     let uuid = Client.Cluster.get_uuid ~rpc ~session_id ~self:cluster in
     printer (Cli_printer.PList [uuid])
@@ -7826,13 +7845,23 @@ module Cluster_host = struct
     let cluster_uuid = List.assoc "cluster-uuid" params in
     let host_uuid = List.assoc "host-uuid" params in
     let pif_uuid = List.assoc "pif-uuid" params in
+    let other_pif_uuids =
+      List.assoc_opt "other-pif-uuids" params
+      |> Option.fold ~none:[] ~some:(String.split_on_char ',')
+    in
     let cluster =
       Client.Cluster.get_by_uuid ~rpc ~session_id ~uuid:cluster_uuid
     in
     let host = Client.Host.get_by_uuid ~rpc ~session_id ~uuid:host_uuid in
-    let pif = Client.PIF.get_by_uuid ~rpc ~session_id ~uuid:pif_uuid in
+    let pIF = Client.PIF.get_by_uuid ~rpc ~session_id ~uuid:pif_uuid in
+    let other_PIFs =
+      List.map
+        (fun uuid -> Client.PIF.get_by_uuid ~rpc ~session_id ~uuid)
+        other_pif_uuids
+    in
     let cluster_host =
-      Client.Cluster_host.create ~rpc ~session_id ~cluster ~host ~pif
+      Client.Cluster_host.create ~rpc ~session_id ~cluster ~host ~pIF
+        ~other_PIFs
     in
     let uuid =
       Client.Cluster_host.get_uuid ~rpc ~session_id ~self:cluster_host

@@ -24,7 +24,12 @@ let string_of_ip = Ipaddr.to_string
   this is done to maintain backwards compatability, and should be combined with
   the other variant in the future.
   *)
-type extended_addr = {ip: Ipaddr.t; hostuuid: string; hostname: string}
+type extended_addr = {
+    ip: Ipaddr.t
+  ; other_ips: Ipaddr.t list
+  ; hostuuid: string
+  ; hostname: string
+}
 [@@deriving rpcty]
 
 type address = IPv4 of string | Extended of extended_addr [@@deriving rpcty]
@@ -34,6 +39,12 @@ let ipstr_of_address = function
       a
   | Extended {ip; _} ->
       string_of_ip ip
+
+let ipstr_of_other_addr = function
+  | IPv4 _ ->
+      []
+  | Extended {other_ips; _} ->
+      List.map string_of_ip other_ips
 
 let ipaddr_of_address = function
   | IPv4 _ as ip ->
@@ -46,15 +57,22 @@ let ipaddr_of_address = function
 let fullstr_of_address = function
   | IPv4 a ->
       a
-  | Extended {ip; hostuuid; hostname} ->
-      Printf.sprintf "(%s, %s, %s)" (string_of_ip ip) hostuuid hostname
+  | Extended {ip; other_ips; hostuuid; hostname} ->
+      let other_ip_addrs =
+        List.map string_of_ip other_ips |> String.concat ","
+      in
+      Printf.sprintf "(%s, %s, %s, %s)" (string_of_ip ip) other_ip_addrs
+        hostuuid hostname
 
 let printaddr () = function
   | IPv4 s ->
       Printf.sprintf "IPv4(%s)" s
-  | Extended {ip; hostuuid; hostname} ->
-      Printf.sprintf "IP(%s) hostuuid (%s) hostname(%s)" (string_of_ip ip)
-        hostuuid hostname
+  | Extended {ip; other_ips; hostuuid; hostname} ->
+      let other_ip_addrs =
+        List.map string_of_ip other_ips |> String.concat ","
+      in
+      Printf.sprintf "IP(%s) other_IPs (%s) hostuuid (%s) hostname(%s)"
+        (string_of_ip ip) other_ip_addrs hostuuid hostname
 
 type addresslist = address list [@@deriving rpcty]
 

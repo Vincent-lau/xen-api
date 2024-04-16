@@ -3506,7 +3506,13 @@ let rec cmdtable_data : (string * cmd_spec) list =
   ; ( "cluster-pool-create"
     , {
         reqd= ["network-uuid"]
-      ; optn= ["cluster-stack"; "token-timeout"; "token-timeout-coefficient"]
+      ; optn=
+          [
+            "cluster-stack"
+          ; "token-timeout"
+          ; "token-timeout-coefficient"
+          ; "other-network-uuids"
+          ]
       ; help= "Create pool-wide cluster"
       ; implementation= No_fd Cli_operations.Cluster.pool_create
       ; flags= []
@@ -3548,6 +3554,7 @@ let rec cmdtable_data : (string * cmd_spec) list =
           ; "pool-auto-join"
           ; "token-timeout"
           ; "token-timeout-coefficient"
+          ; "other-pif-uuids"
           ]
       ; help= "Create new cluster with master as first member"
       ; implementation= No_fd Cli_operations.Cluster.create
@@ -3566,7 +3573,7 @@ let rec cmdtable_data : (string * cmd_spec) list =
   ; ( "cluster-host-create"
     , {
         reqd= ["cluster-uuid"; "host-uuid"; "pif-uuid"]
-      ; optn= []
+      ; optn= ["other-pif-uuids"]
       ; help= "Add a host to an existing cluster"
       ; implementation= No_fd Cli_operations.Cluster_host.create
       ; flags= [Hidden]

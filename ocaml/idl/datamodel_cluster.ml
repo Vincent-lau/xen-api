@@ -61,14 +61,16 @@ let create =
          ; param_default= None
          }
        ; {
+           param_type= Set (Ref _pif)
+         ; param_name= "other_PIFs"
+         ; param_doc= ""
+         ; param_release= kolkata_release (* FIXME: XS 9 *)
+         ; param_default= None
+         }
+       ; {
            param_type= String
          ; param_name= "cluster_stack"
-         ; param_doc=
-             "Currently only corosync is used as the cluster stack. Both \
-              corosync and corosync3 are supported. Note that corosync \
-              corresponds to corosync2, but is included only for backwards \
-              compatability. It is an error to start the cluster with \
-              cluster_stack=corosync)"
+         ; param_doc= "Currently only corosync is used as the cluster stack."
          ; param_release= kolkata_release
          ; param_default= None
          }
@@ -130,14 +132,16 @@ let pool_create =
          ; param_default= None
          }
        ; {
+           param_type= Set (Ref _network)
+         ; param_name= "other_networks"
+         ; param_doc= "Additional networks, used for multi-homing."
+         ; param_release= kolkata_release (* FIXME: XS 9 *)
+         ; param_default= None
+         }
+       ; {
            param_type= String
          ; param_name= "cluster_stack"
-         ; param_doc=
-             "Currently only corosync is used as the cluster stack. Both \
-              corosync and corosync3 are supported. Note that corosync \
-              corresponds to corosync2, but is included only for backwards \
-              compatability. It is an error to start the cluster with \
-              cluster_stack=corosync)"
+         ; param_doc= "Currently only corosync is used as the cluster stack."
          ; param_release= kolkata_release
          ; param_default= None
          }
@@ -201,10 +205,8 @@ let t =
              (Some (VString Constants.default_smapiv3_cluster_stack))
            "Currently only corosync is used as the cluster stack. "
        ; field ~qualifier:StaticRO ~lifecycle ~ty:Int "cluster_stack_version"
-           ~default_value:(Some (VInt 3L))
-           "Version of cluster stack, not writable via the API. Default value \
-            is the default version of the input cluster_stack used by \
-            xapi-clusterd."
+           ~default_value:(Some (VInt 2L))
+           "Version of cluster stack, not writable via the API."
        ; field ~qualifier:DynamicRO ~lifecycle:[] ~ty:Bool "is_quorate"
            ~default_value:(Some (VBool false))
            "Whether the cluster stack thinks the cluster is quorate"

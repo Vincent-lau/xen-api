@@ -21,6 +21,7 @@
 val create :
      __context:Context.t
   -> pIF:API.ref_PIF
+  -> other_PIFs:API.ref_PIF list
   -> cluster_stack:string
   -> pool_auto_join:bool
   -> token_timeout:float
@@ -42,6 +43,7 @@ val get_network : __context:Context.t -> self:API.ref_Cluster -> API.ref_network
 val pool_create :
      __context:Context.t
   -> network:API.ref_network
+  -> other_networks:API.ref_network list
   -> cluster_stack:string
   -> token_timeout:float
   -> token_timeout_coefficient:float

@@ -41,6 +41,17 @@ let fix_pif_prerequisites ~__context (self : API.ref_PIF) =
     Db.PIF.set_disallow_unplug ~__context ~self ~value:true
   )
 
+let fix_other_pif_prerequisites ~__context (self : API.ref_PIF) =
+  (* The following is to raise an exception if there's no IP. This
+     avoids making any changes to the PIF if there's something we
+     simply can't fix. *)
+  let pif_rec self = Db.PIF.get_record ~__context ~self in
+  ip_of_pif (self, pif_rec self) |> ignore ;
+  if not (pif_rec self).API.pIF_currently_attached then
+    Helpers.call_api_functions ~__context (fun rpc session_id ->
+        Client.Client.PIF.plug ~rpc ~session_id ~self
+    )
+
 let call_api_function_with_alert ~__context ~msg ~cls ~obj_uuid ~body
     ~(api_func : (Rpc.call -> Rpc.response) -> API.ref_session -> unit) =
   Helpers.call_api_functions ~__context (fun rpc session_id ->
@@ -71,10 +82,14 @@ let alert_for_cluster_host_join ~__context ~cluster_host =
     ~new_hosts:[cluster_host]
 
 (* Create xapi db object for cluster_host, resync_host calls clusterd *)
-let create_internal ~__context ~cluster ~host ~pIF : API.ref_Cluster_host =
+let create_internal ~__context ~cluster ~host ~pIF ~other_PIFs :
+    API.ref_Cluster_host =
   with_clustering_lock __LOC__ (fun () ->
       assert_operation_host_target_is_localhost ~__context ~host ;
       assert_pif_attached_to ~host ~pIF ~__context ;
+      List.iter
+        (fun pIF -> assert_pif_attached_to ~host ~pIF ~__context)
+        other_PIFs ;
       assert_cluster_host_can_be_created ~__context ~host ;
       let cluster_stack_version =
         Db.Cluster.get_cluster_stack_version ~__context ~self:cluster
@@ -83,7 +98,7 @@ let create_internal ~__context ~cluster ~host ~pIF : API.ref_Cluster_host =
       let ref = Ref.make () in
       let uuid = Uuidx.(to_string (make ())) in
       Db.Cluster_host.create ~__context ~ref ~uuid ~cluster ~host ~pIF
-        ~enabled:false ~current_operations:[] ~allowed_operations:[]
+        ~other_PIFs ~enabled:false ~current_operations:[] ~allowed_operations:[]
         ~other_config:[] ~joined:false ~live:false
         ~last_update_live:API.Date.epoch ;
       alert_for_cluster_host_join ~__context ~cluster_host:ref ;
@@ -130,12 +145,24 @@ let join_internal ~__context ~self =
   with_clustering_lock __LOC__ (fun () ->
       let pIF = Db.Cluster_host.get_PIF ~__context ~self in
       fix_pif_prerequisites ~__context pIF ;
+      let other_PIFs = Db.Cluster_host.get_other_PIFs ~__context ~self in
+      List.iter (fix_other_pif_prerequisites ~__context) other_PIFs ;
       let dbg = Context.string_of_task_and_tracing __context in
       let cluster = Db.Cluster_host.get_cluster ~__context ~self in
       let cluster_token =
         Db.Cluster.get_cluster_token ~__context ~self:cluster
       in
       let ip_addr = ip_of_pif (pIF, Db.PIF.get_record ~__context ~self:pIF) in
+      let other_ip_addrs =
+        List.map (fun self -> Db.PIF.get_record ~__context ~self) other_PIFs
+        |> List.combine other_PIFs
+        |> List.map ip_of_pif
+      in
+      List.iter
+        (fun ip_addr ->
+          debug "found other ip addr %s" (ipstr_of_address ip_addr)
+        )
+        other_ip_addrs ;
       let hostuuid = Inventory.lookup Inventory._installation_uuid in
       let host = Db.Cluster_host.get_host ~__context ~self in
       let hostname = Db.Host.get_hostname ~__context ~self:host in
@@ -145,6 +172,22 @@ let join_internal ~__context ~self =
             Extended
               {
                 ip= Ipaddr.of_string_exn (ipstr_of_address ip_addr)
+              ; other_ips= []
+              ; hostuuid
+              ; hostname
+              }
+          )
+        else if Xapi_cluster_helpers.corosync3_enabled ~__context then
+          let other_ips =
+            List.map
+              (fun ip_addr -> ipstr_of_address ip_addr |> Ipaddr.of_string_exn)
+              other_ip_addrs
+          in
+          Cluster_interface.(
+            Extended
+              {
+                ip= Ipaddr.of_string_exn (ipstr_of_address ip_addr)
+              ; other_ips
               ; hostuuid
               ; hostname
               }
@@ -241,9 +284,9 @@ let resync_host ~__context ~host =
       )
 
 (* API call split into separate functions to create in db and enable in client layer *)
-let create ~__context ~cluster ~host ~pif =
+let create ~__context ~cluster ~host ~pIF ~other_PIFs =
   let cluster_host : API.ref_Cluster_host =
-    create_internal ~__context ~cluster ~host ~pIF:pif
+    create_internal ~__context ~cluster ~host ~pIF ~other_PIFs
   in
   resync_host ~__context ~host ;
   cluster_host
@@ -335,10 +378,17 @@ let enable ~__context ~self =
       let dbg = Context.string_of_task_and_tracing __context in
       let host = Db.Cluster_host.get_host ~__context ~self in
       assert_operation_host_target_is_localhost ~__context ~host ;
-      let pifref = Db.Cluster_host.get_PIF ~__context ~self in
-      let pifrec = Db.PIF.get_record ~__context ~self:pifref in
-      assert_pif_prerequisites (pifref, pifrec) ;
-      let ip_addr = ip_of_pif (pifref, pifrec) in
+      let pIF = Db.Cluster_host.get_PIF ~__context ~self in
+      let pIFrec = Db.PIF.get_record ~__context ~self:pIF in
+      assert_pif_prerequisites (pIF, pIFrec) ;
+      let other_PIFs = Db.Cluster_host.get_other_PIFs ~__context ~self in
+      let other_PIFrecs =
+        List.map (fun pIF -> Db.PIF.get_record ~__context ~self:pIF) other_PIFs
+      in
+      let other_PIF_and_rec = List.combine other_PIFs other_PIFrecs in
+      List.iter assert_other_pif_prerequisites other_PIF_and_rec ;
+      let ip_addr = ip_of_pif (pIF, pIFrec) in
+      let other_ip_addrs = List.map ip_of_pif other_PIF_and_rec in
       let hostuuid = Inventory.lookup Inventory._installation_uuid in
       let hostname = Db.Host.get_hostname ~__context ~self:host in
       let member =
@@ -347,6 +397,22 @@ let enable ~__context ~self =
             Extended
               {
                 ip= Ipaddr.of_string_exn (ipstr_of_address ip_addr)
+              ; other_ips= []
+              ; hostuuid
+              ; hostname
+              }
+          )
+        else if Xapi_cluster_helpers.corosync3_enabled ~__context then
+          let other_ips =
+            List.map
+              (fun ip_addr -> ipstr_of_address ip_addr |> Ipaddr.of_string_exn)
+              other_ip_addrs
+          in
+          Cluster_interface.(
+            Extended
+              {
+                ip= Ipaddr.of_string_exn (ipstr_of_address ip_addr)
+              ; other_ips
               ; hostuuid
               ; hostname
               }
@@ -479,6 +545,14 @@ let create_as_necessary ~__context ~host =
       (* assume pool autojoin set *)
       let network = get_network_internal ~__context ~self:cluster in
       let pIF, _ = Xapi_clustering.pif_of_host ~__context network host in
-      create_internal ~__context ~cluster ~host ~pIF |> ignore
+      let other_networks = get_other_networks_internal ~__context ~cluster in
+      let other_PIFs =
+        List.map
+          (fun network ->
+            Xapi_clustering.pif_of_host ~__context network host |> fst
+          )
+          other_networks
+      in
+      create_internal ~__context ~cluster ~host ~pIF ~other_PIFs |> ignore
   | None ->
       ()

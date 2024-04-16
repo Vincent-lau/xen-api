@@ -5137,6 +5137,14 @@ let cluster_host_record rpc session_id cluster_host =
       ; make_field ~name:"PIF"
           ~get:(fun () -> (x ()).API.cluster_host_PIF |> get_uuid_from_ref)
           ()
+      ; make_field ~name:"other_PIFs"
+          ~get:(fun () ->
+            (x ()).API.cluster_host_other_PIFs |> get_uuids_from_refs
+          )
+          ~get_set:(fun () ->
+            List.map get_uuid_from_ref (x ()).API.cluster_host_other_PIFs
+          )
+          ()
       ; make_field ~name:"host"
           ~get:(fun () -> (x ()).API.cluster_host_host |> get_uuid_from_ref)
           ()

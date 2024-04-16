@@ -79,6 +79,17 @@ let ip_of_pif (ref, record) =
       ) ;
   Cluster_interface.IPv4 ip
 
+let assert_pif_disallow_unplug (pif_ref, record) =
+  if not record.API.pIF_disallow_unplug then
+    raise Api_errors.(Server_error (pif_allows_unplug, [Ref.string_of pif_ref]))
+
+let assert_pif_currently_attached (pif_ref, record) =
+  if not record.API.pIF_currently_attached then
+    raise
+      Api_errors.(
+        Server_error (required_pif_is_unplugged, [Ref.string_of pif_ref])
+      )
+
 (** [assert_pif_prerequisites (pif_ref,pif_rec)] raises an exception if any of
     the prerequisites of using a PIF for clustering are unmet. These
     prerequisites are:
@@ -89,17 +100,14 @@ let ip_of_pif (ref, record) =
     }*)
 let assert_pif_prerequisites pif =
   let pif_ref, record = pif in
-  let assert_pif_permaplugged (pif_ref, record) =
-    if not record.API.pIF_disallow_unplug then
-      raise
-        Api_errors.(Server_error (pif_allows_unplug, [Ref.string_of pif_ref])) ;
-    if not record.pIF_currently_attached then
-      raise
-        Api_errors.(
-          Server_error (required_pif_is_unplugged, [Ref.string_of pif_ref])
-        )
-  in
-  assert_pif_permaplugged pif ;
+  assert_pif_disallow_unplug pif ;
+  assert_pif_currently_attached pif ;
+  ignore (ip_of_pif pif) ;
+  debug "Got IP %s for PIF %s" record.API.pIF_IP (Ref.string_of pif_ref)
+
+let assert_other_pif_prerequisites pif =
+  let pif_ref, record = pif in
+  assert_pif_currently_attached pif ;
   ignore (ip_of_pif pif) ;
   debug "Got IP %s for PIF %s" record.API.pIF_IP (Ref.string_of pif_ref)
 
@@ -256,6 +264,35 @@ let get_network_internal ~__context ~self =
   | _ ->
       failwith ("No common network found for cluster " ^ Ref.string_of self)
 
+let get_other_networks_internal ~__context ~cluster =
+  (* Lots of requests to DB, performace optimisation? *)
+  let rec transpose x =
+    if List.filter (fun x -> x <> []) x = [] then
+      []
+    else
+      let heads = List.map List.hd x in
+      let tails = List.map List.tl x in
+      heads :: transpose tails
+  in
+
+  Db.Cluster.get_cluster_hosts ~__context ~self:cluster
+  |> List.map (fun ch -> Db.Cluster_host.get_other_PIFs ~__context ~self:ch)
+  |> transpose
+  |> List.filter_map (fun pIFs ->
+         match
+           List.map (fun pIF -> Db.PIF.get_network ~__context ~self:pIF) pIFs
+         with
+         | [] ->
+             None
+         | [n] ->
+             Some n
+         | n :: ns ->
+             if List.for_all (( = ) n) ns then
+               Some n
+             else
+               None
+     )
+
 let assert_cluster_host_enabled ~__context ~self ~expected =
   let actual = Db.Cluster_host.get_enabled ~__context ~self in
   if actual <> expected then
@@ -329,6 +366,9 @@ module Daemon = struct
         maybe_call_script ~__context
           !Xapi_globs.firewall_port_config_script
           ["open"; port] ;
+        maybe_call_script ~__context
+          !Xapi_globs.firewall_port_config_script
+          ["open"; "21064"; "sctp"] ;
         maybe_call_script ~__context !Xapi_globs.systemctl ["enable"; service] ;
         maybe_call_script ~__context !Xapi_globs.systemctl ["start"; service]
       with _ ->
