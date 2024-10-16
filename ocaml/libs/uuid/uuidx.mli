@@ -69,7 +69,8 @@ type without_secret =
   | `SDN_controller
   | `secret
   | `SM
-  | `SR
+  | (* | `sm_feature *)
+    `SR
   | `sr_stat
   | `subject
   | `task

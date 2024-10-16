@@ -195,6 +195,8 @@ let _sr_stat = "sr_stat"
 
 let _sm = "SM"
 
+(* let _sm_feature = "sm_feature" *)
+
 let _lvhd = "LVHD"
 
 let _vm = "VM"

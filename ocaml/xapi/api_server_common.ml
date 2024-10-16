@@ -66,6 +66,7 @@ module Actions = struct
 
   module SR = Xapi_sr
   module SM = Xapi_sm
+  (* module Sm_feature = struct end *)
 
   module VDI = struct
     include Xapi_vdi

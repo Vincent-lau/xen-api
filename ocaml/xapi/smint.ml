@@ -15,6 +15,8 @@
  * @group Storage
 *)
 
+module Listext = Xapi_stdext_std.Listext
+
 module D = Debug.Make (struct let name = "smint" end)
 
 open D
@@ -110,6 +112,8 @@ let capability_of_feature : feature -> capability = fst
 
 let known_features = List.map fst string_to_capability_table
 
+let unparse_feature f v = f ^ "/" ^ (Int64.to_string v)
+
 let parse_string_int64_features features =
   let scan feature =
     match String.split_on_char '/' feature with
@@ -133,6 +137,15 @@ let parse_string_int64_features features =
   features
   |> List.filter_map scan
   |> List.sort_uniq (fun (x, _) (y, _) -> compare x y)
+
+(* let common_features existing_features new_features =
+   (* TODO If we have (FOO, 1) and (FOO, 2), consider the intersection to be (FOO, 1) *)
+   debug "%s getting common features" __FUNCTION__ ;
+   List.iter (fun (f, v) -> debug "feature1 f %s v %Ld" f v) features1 ;
+   List.iter (fun (f, v) -> debug "feature2 f %s v %Ld" f v) features2 ;
+   let r = Listext.List.intersect features1 features2 in
+   List.iter (fun (f, v) -> debug "common feature f %s v %Ld" f v) features1 ;
+   r *)
 
 let parse_capability_int64_features strings =
   List.map

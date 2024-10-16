@@ -4825,6 +4825,7 @@ functor
     module PIF_metrics = struct end
 
     module SM = struct end
+    (* module Sm_feature = struct end *)
 
     module SR = struct
       let unmark_sr ~__context ~sr ~doc ~op:_ =
