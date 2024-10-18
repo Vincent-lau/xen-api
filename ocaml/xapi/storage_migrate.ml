@@ -456,12 +456,6 @@ let add_to_sm_config vdi_info key value =
   let vdi_info = remove_from_sm_config vdi_info key in
   {vdi_info with sm_config= (key, value) :: vdi_info.sm_config}
 
-let dbg_and_tracing_of_task task =
-  Debug_info.make
-    ~log:(Storage_task.get_dbg task)
-    ~tracing:(Storage_task.tracing task)
-  |> Debug_info.to_string
-
 (** This module [Migrate] consists of the concrete implementations of the migration
 part of SMAPI. *)
 module Migrate = struct
@@ -714,7 +708,7 @@ module Migrate = struct
     | e ->
         raise (Storage_error (Internal_error (Printexc.to_string e)))
 
-  let start ~task ~dbg:_ ~sr ~vdi ~dp ~url ~dest ~verify_dest =
+  let start ~task ~dbg ~sr ~vdi ~dp ~url ~dest ~verify_dest =
     SXM.info "%s sr:%s vdi:%s url:%s dest:%s verify_dest:%B" __FUNCTION__
       (Storage_interface.Sr.string_of sr)
       (Storage_interface.Vdi.string_of vdi)
@@ -1372,14 +1366,14 @@ let with_task_and_thread ~dbg f =
 
 let copy ~dbg ~sr ~vdi ~url ~dest ~verify_dest =
   with_task_and_thread ~dbg (fun task ->
-      Migrate.copy_into_sr ~task ~dbg:dbg.Debug_info.log ~sr ~vdi ~url ~dest
-        ~verify_dest
+      Migrate.copy_into_sr ~task ~dbg:(Debug_info.to_string dbg) ~sr ~vdi ~url
+        ~dest ~verify_dest
   )
 
 let start ~dbg ~sr ~vdi ~dp ~url ~dest ~verify_dest =
   with_task_and_thread ~dbg (fun task ->
-      Migrate.start ~task ~dbg:dbg.Debug_info.log ~sr ~vdi ~dp ~url ~dest
-        ~verify_dest
+      Migrate.start ~task ~dbg:(Debug_info.to_string dbg) ~sr ~vdi ~dp ~url
+        ~dest ~verify_dest
   )
 
 (* XXX: PR-1255: copy the xenopsd 'raise Exception' pattern *)
