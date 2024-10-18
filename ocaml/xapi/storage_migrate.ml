@@ -620,7 +620,7 @@ module Migrate = struct
   (** [copy_into_sr] does not requires a dest vdi to be provided, instead, it will 
   find the nearest vdi on the [dest] sr, and if there is no such vdi, it will 
   create one. *)
-  let copy_into_sr ~task ~dbg ~sr ~vdi ~dp:_ ~url ~dest ~verify_dest =
+  let copy_into_sr ~task ~dbg ~sr ~vdi ~url ~dest ~verify_dest =
     debug "copy sr:%s vdi:%s url:%s dest:%s verify_dest:%B"
       (Storage_interface.Sr.string_of sr)
       (Storage_interface.Vdi.string_of vdi)
@@ -1373,9 +1373,9 @@ let with_task_and_thread ~dbg f =
    this way so that they all stay in one place rather than being spread around the
    file. *)
 
-let copy ~dbg ~sr ~vdi ~dp ~url ~dest ~verify_dest =
+let copy ~dbg ~sr ~vdi ~url ~dest ~verify_dest =
   with_task_and_thread ~dbg (fun task ->
-      Migrate.copy_into_sr ~task ~dbg:dbg.Debug_info.log ~sr ~vdi ~dp ~url ~dest
+      Migrate.copy_into_sr ~task ~dbg:dbg.Debug_info.log ~sr ~vdi ~url ~dest
         ~verify_dest
   )
 
