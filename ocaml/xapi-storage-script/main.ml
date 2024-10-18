@@ -339,6 +339,8 @@ let _clone_on_boot_key = "clone-on-boot"
 
 let _vdi_type_key = "vdi-type"
 
+let _vdi_content_id_key = "content_id"
+
 let _snapshot_time_key = "snapshot_time"
 
 let _is_a_snapshot_key = "is_a_snapshot"
@@ -725,8 +727,8 @@ let vdi_of_volume x =
   let open Storage_interface in
   {
     vdi= Vdi.of_string x.Xapi_storage.Control.key
-  ; uuid= x.Xapi_storage.Control.uuid
-  ; content_id= ""
+  ; uuid= x.Xapi_storage.Control.uuid (* TODO update to correct content id *)
+  ; content_id= find_string _vdi_content_id_key ~default:""
   ; name_label= x.Xapi_storage.Control.name
   ; name_description= x.Xapi_storage.Control.description
   ; ty= find_string _vdi_type_key ~default:""
@@ -1709,16 +1711,69 @@ let bind ~volume_script_dir =
     set ~dbg ~sr ~vdi ~key:_vdi_type_key ~value:"cbt_metadata"
   in
   S.VDI.data_destroy vdi_data_destroy_impl ;
+  let vdi_compose_impl dbg sr child parent =
+    wrap
+    @@
+    let* sr = Attached_SRs.find sr in
+    let child = Storage_interface.Vdi.string_of child in
+    let parent = Storage_interface.Vdi.string_of parent in
+    return_volume_rpc (fun () ->
+        Volume_client.compose (volume_rpc ~dbg) dbg sr child parent
+    )
+  in
+  S.VDI.compose vdi_compose_impl ;
+  let vdi_set_content_id_impl dbg sr vdi content_id =
+    wrap
+    @@
+    let* sr = Attached_SRs.find sr in
+    let vdi = Storage_interface.Vdi.string_of vdi in
+    let* () = set ~dbg ~sr ~vdi ~key:_vdi_content_id_key ~value:content_id in
+    return ()
+  in
+  S.VDI.set_content_id vdi_set_content_id_impl ;
+  let vdi_add_to_sm_config_impl _dbg _sr _vdi _key _value =
+    wrap @@ return ()
+  in
+  S.VDI.add_to_sm_config vdi_add_to_sm_config_impl ;
+  let vdi_remove_from_sm_config_impl _dbg _sr _vdi _key =
+    wrap @@ return ()
+  in
+  S.VDI.remove_from_sm_config vdi_remove_from_sm_config_impl ;
+  let data_import_activate_impl dbg _dp sr vdi' vm' =
+    (let vdi = Storage_interface.Vdi.string_of vdi' in
+     let domain = Storage_interface.Vm.string_of vm' in
+     Attached_SRs.find sr >>>= fun sr ->
+     (* Discover the URIs using Volume.stat *)
+     stat ~dbg ~sr ~vdi >>>= fun response ->
+     ( match
+         List.assoc_opt _clone_on_boot_key response.Xapi_storage.Control.keys 
+       with
+     | None ->
+         return response
+     | Some temporary ->
+         stat ~dbg ~sr ~vdi:temporary
+     )
+     >>>= fun response ->
+     choose_datapath domain response >>>= fun (rpc, _datapath, uri, domain) ->
+     return_data_rpc (fun () ->
+         (* debug
+           "about to call Datapath_client.import_activate with uri %s domain %s"
+           uri domain ; *)
+         Datapath_client.import_activate (rpc ~dbg) dbg uri domain
+     )
+    )
+    |> wrap
+  in
+  S.DATA.MIRROR.import_activate data_import_activate_impl ;
   let u name _ = failwith ("Unimplemented: " ^ name) in
   S.get_by_name (u "get_by_name") ;
-  S.VDI.compose (u "VDI.compose") ;
   S.VDI.get_by_name (u "VDI.get_by_name") ;
   S.DATA.MIRROR.receive_start (u "DATA.MIRROR.receive_start") ;
+  S.DATA.MIRROR.receive_start2 (u "DATA.MIRROR.receive_start2") ;
   S.UPDATES.get (u "UPDATES.get") ;
   S.SR.update_snapshot_info_dest (u "SR.update_snapshot_info_dest") ;
   S.DATA.MIRROR.list (u "DATA.MIRROR.list") ;
   S.TASK.stat (u "TASK.stat") ;
-  S.VDI.remove_from_sm_config (u "VDI.remove_from_sm_config") ;
   S.DP.diagnostics (u "DP.diagnostics") ;
   S.TASK.destroy (u "TASK.destroy") ;
   S.DP.destroy (u "DP.destroy") ;
@@ -1728,7 +1783,6 @@ let bind ~volume_script_dir =
   S.DP.stat_vdi (u "DP.stat_vdi") ;
   S.DATA.MIRROR.receive_finalize (u "DATA.MIRROR.receive_finalize") ;
   S.DP.create (u "DP.create") ;
-  S.VDI.set_content_id (u "VDI.set_content_id") ;
   S.DP.attach_info (u "DP.attach_info") ;
   S.TASK.cancel (u "TASK.cancel") ;
   S.VDI.attach (u "VDI.attach") ;
@@ -1739,7 +1793,6 @@ let bind ~volume_script_dir =
   S.VDI.get_url (u "VDI.get_url") ;
   S.DATA.MIRROR.start (u "DATA.MIRROR.start") ;
   S.Policy.get_backend_vm (u "Policy.get_backend_vm") ;
-  S.DATA.copy_into (u "DATA.copy_into") ;
   S.DATA.MIRROR.receive_cancel (u "DATA.MIRROR.receive_cancel") ;
   S.SR.update_snapshot_info_src (u "SR.update_snapshot_info_src") ;
   S.DATA.MIRROR.stop (u "DATA.MIRROR.stop") ;

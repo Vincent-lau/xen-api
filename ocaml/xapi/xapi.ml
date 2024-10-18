@@ -1441,7 +1441,7 @@ let server_init () =
             )
           ; ( "Cancelling in-progress storage migrations"
             , []
-            , fun () -> Storage_migrate.killall ~dbg:"xapi init"
+            , fun () -> Storage_migrate.Migrate.killall ~dbg:"xapi init"
             )
           ; ( "Initialize threaded authentication"
             , [Startup.NoExnRaising]

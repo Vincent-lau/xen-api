@@ -28,7 +28,7 @@ module DD = Debug.Make (struct let name = "xapi_vm_migrate" end)
 
 open DD
 
-module SMPERF = Debug.Make (struct let name = "SMPERF" end)
+module SXM = Debug.Make (struct let name = "SXM" end)
 
 open Client
 
@@ -167,11 +167,18 @@ let assert_sr_support_operations ~__context ~vdi_map ~remote ~ops =
     let sr_record = Db.SR.get_record_internal ~__context ~self:source_sr in
     let sr_features = Xapi_sr_operations.features_of_sr ~__context sr_record in
     if not (List.for_all (fun op -> Smint.(has_capability op sr_features)) ops)
-    then
+    then (
+      debug "src sm features: %s, ops: %s"
+        (List.map fst sr_features
+        |> List.map Smint.string_of_capability
+        |> String.concat ";"
+        )
+        (List.map Smint.string_of_capability ops |> String.concat ";") ;
       raise
         (Api_errors.Server_error
            (Api_errors.sr_does_not_support_migration, [Ref.string_of source_sr])
         )
+    )
   in
   let op_supported_on_dest_sr sr ops sm_record remote =
     (* Check VDIs must not be mirrored to SR which doesn't have required capability *)
@@ -191,11 +198,15 @@ let assert_sr_support_operations ~__context ~vdi_map ~remote ~ops =
            (fun op -> List.mem Smint.(string_of_capability op) sm_capabilities)
            ops
         )
-    then
+    then (
+      debug "dest sm caps: %s, ops: %s"
+        (String.concat ";" sm_capabilities)
+        (List.map Smint.string_of_capability ops |> String.concat ";") ;
       raise
         (Api_errors.Server_error
            (Api_errors.sr_does_not_support_migration, [Ref.string_of sr])
         )
+    )
   in
   let is_sr_matching local_vdi_ref remote_sr_ref =
     let source_sr_ref = Db.VDI.get_SR ~__context ~self:local_vdi_ref in
@@ -737,6 +748,10 @@ type vdi_mirror = {
     snapshot_of: [`VDI] API.Ref.t
   ; (* API's snapshot_of reference *)
     do_mirror: bool (* Whether we should mirror or just copy the VDI *)
+  ; mirror_vm: Vm.t
+        (* The domain slice to which SMAPI calls should be made when mirroring this vdi *)
+  ; copy_vm: Vm.t
+        (* The domain slice to which SMAPI calls should be made when copying this vdi *)
 }
 
 (* For VMs (not snapshots) xenopsd does not allow remapping, so we
@@ -802,7 +817,24 @@ let get_vdi_mirror __context vm vdi do_mirror =
     Storage_interface.Sr.of_string
       (Db.SR.get_uuid ~__context ~self:(Db.VDI.get_SR ~__context ~self:vdi))
   in
-  {vdi; dp; location; sr; xenops_locator; size; snapshot_of; do_mirror}
+  let copy_vm =
+    Ref.string_of vm |> ( ^ ) "SXM-copy-" |> Storage_interface.Vm.of_string
+  in
+  let mirror_vm =
+    Ref.string_of vm |> ( ^ ) "SXM-mirror-" |> Storage_interface.Vm.of_string
+  in
+  {
+    vdi
+  ; dp
+  ; location
+  ; sr
+  ; xenops_locator
+  ; size
+  ; snapshot_of
+  ; do_mirror
+  ; copy_vm
+  ; mirror_vm
+  }
 
 (* We ignore empty or CD VBDs - nothing to do there. Possible redundancy here:
    I don't think any VBDs other than CD VBDs can be 'empty' *)
@@ -928,6 +960,7 @@ let vdi_copy_fun __context dbg vdi_map remote is_intra_pool remote_vdis so_far
   let with_remote_vdi remote_vdi cont =
     debug "Executing remote scan to ensure VDI is known to xapi" ;
     let remote_vdi_str = Storage_interface.Vdi.string_of remote_vdi in
+    debug "Got remote vdi str %s" remote_vdi_str ;
     XenAPI.SR.scan ~rpc:remote.rpc ~session_id:remote.session ~sr:dest_sr_ref ;
     let query =
       Printf.sprintf "(field \"location\"=\"%s\") and (field \"SR\"=\"%s\")"
@@ -985,8 +1018,8 @@ let vdi_copy_fun __context dbg vdi_map remote is_intra_pool remote_vdis so_far
   let mirror_to_remote new_dp =
     let task =
       if not vconf.do_mirror then
-        SMAPI.DATA.copy dbg vconf.sr vconf.location new_dp remote.sm_url dest_sr
-          is_intra_pool
+        SMAPI.DATA.copy dbg vconf.sr vconf.location vconf.copy_vm remote.sm_url
+          dest_sr is_intra_pool
       else
         (* Though we have no intention of "write", here we use the same mode as the
            associated VBD on a mirrored VDIs (i.e. always RW). This avoids problem
@@ -994,17 +1027,18 @@ let vdi_copy_fun __context dbg vdi_map remote is_intra_pool remote_vdis so_far
         let read_write = true in
         (* DP set up is only essential for MIRROR.start/stop due to their open ended pattern.
            It's not necessary for copy which will take care of that itself. *)
-        let vm = Storage_interface.Vm.of_string "0" in
         ignore
-          (SMAPI.VDI.attach3 dbg new_dp vconf.sr vconf.location vm read_write) ;
-        SMAPI.VDI.activate dbg new_dp vconf.sr vconf.location ;
+          (SMAPI.VDI.attach3 dbg new_dp vconf.sr vconf.location vconf.mirror_vm
+             read_write
+          ) ;
+        SMAPI.VDI.activate3 dbg new_dp vconf.sr vconf.location vconf.mirror_vm ;
         let id =
           Storage_migrate.State.mirror_id_of (vconf.sr, vconf.location)
         in
         (* Layering violation!! *)
         ignore (Storage_access.register_mirror __context id) ;
-        SMAPI.DATA.MIRROR.start dbg vconf.sr vconf.location new_dp remote.sm_url
-          dest_sr is_intra_pool
+        SMAPI.DATA.MIRROR.start dbg vconf.sr vconf.location new_dp
+          vconf.mirror_vm vconf.copy_vm remote.sm_url dest_sr is_intra_pool
     in
     let mapfn x =
       let total = Int64.to_float total_size in
@@ -1054,10 +1088,12 @@ let vdi_copy_fun __context dbg vdi_map remote is_intra_pool remote_vdis so_far
         ) ;
       result
     with e ->
+      debug "%s: error %s" __FUNCTION__ (Printexc.to_string e) ;
       let mirror_failed =
         match mirror_id with
         | Some mid ->
             ignore (Storage_access.unregister_mirror mid) ;
+            debug "%s stat now" __FUNCTION__ ;
             let m = SMAPI.DATA.MIRROR.stat dbg mid in
             (try SMAPI.DATA.MIRROR.stop dbg mid with _ -> ()) ;
             m.Mirror.failed
@@ -1076,9 +1112,11 @@ let vdi_copy_fun __context dbg vdi_map remote is_intra_pool remote_vdis so_far
     with_new_dp (fun new_dp ->
         let mirror_id, remote_vdi = mirror_to_remote new_dp in
         with_remote_vdi remote_vdi (fun remote_vdi_ref ->
+            debug "%s pre getting mirror record" __FUNCTION__ ;
             let mirror_record =
               get_mirror_record ~new_dp remote_vdi remote_vdi_ref
             in
+            debug "%s post getting mirror record" __FUNCTION__ ;
             post_mirror mirror_id mirror_record
         )
     )
@@ -1169,8 +1207,7 @@ let check_vdi_map ~__context vms_vdis vdi_map =
 
 let migrate_send' ~__context ~vm ~dest ~live:_ ~vdi_map ~vif_map ~vgpu_map
     ~options =
-  SMPERF.debug "vm.migrate_send called vm:%s"
-    (Db.VM.get_uuid ~__context ~self:vm) ;
+  SXM.debug "vm.migrate_send called vm:%s" (Db.VM.get_uuid ~__context ~self:vm) ;
   let open Xapi_xenops in
   let localhost = Helpers.get_localhost ~__context in
   let remote = remote_of_dest ~__context dest in
@@ -1509,7 +1546,8 @@ let migrate_send' ~__context ~vm ~dest ~live:_ ~vdi_map ~vif_map ~vgpu_map
           )
           vifs
       in
-      (* Destroy the local datapaths - this allows the VDIs to properly detach, invoking the migrate_finalize calls *)
+      (* Destroy the local datapaths - this allows the VDIs to properly detach,
+         invoking the migrate_finalize calls *)
       List.iter
         (fun mirror_record ->
           if mirror_record.mr_mirrored then
@@ -1520,7 +1558,7 @@ let migrate_send' ~__context ~vm ~dest ~live:_ ~vdi_map ~vif_map ~vgpu_map
                 ()
         )
         all_map ;
-      SMPERF.debug "vm.migrate_send: migration initiated vm:%s" vm_uuid ;
+      SXM.debug "vm.migrate_send: migration initiated vm:%s" vm_uuid ;
       (* In case when we do SXM on the same host (mostly likely a VDI
          migration), the VM's metadata in xenopsd will be in-place updated
          as soon as the domain migration starts. For these case, there
@@ -1531,7 +1569,8 @@ let migrate_send' ~__context ~vm ~dest ~live:_ ~vdi_map ~vif_map ~vgpu_map
         TaskHelper.exn_if_cancelling ~__context ;
         TaskHelper.set_not_cancellable ~__context
       ) ;
-      (* It's acceptable for the VM not to exist at this point; shutdown commutes with storage migrate *)
+      (* It's acceptable for the VM not to exist at this point; shutdown commutes
+         with storage migrate *)
       ( try
           Xapi_xenops.Events_from_xenopsd.with_suppressed queue_name dbg vm_uuid
             (fun () ->
@@ -1570,7 +1609,7 @@ let migrate_send' ~__context ~vm ~dest ~live:_ ~vdi_map ~vif_map ~vgpu_map
             )
       ) ;
       debug "Migration complete" ;
-      SMPERF.debug "vm.migrate_send: migration complete vm:%s" vm_uuid ;
+      SXM.debug "vm.migrate_send: migration complete vm:%s" vm_uuid ;
       (* So far the main body of migration is completed, and the rests are
          updates, config or cleanup on the source and destination. There will
          be no (clean) way back from this point, due to these destructive
@@ -1649,7 +1688,7 @@ let migrate_send' ~__context ~vm ~dest ~live:_ ~vdi_map ~vif_map ~vgpu_map
       List.iter (fun self -> Xapi_vtpm.destroy ~__context ~self) vtpms ;
       List.iter (fun self -> Db.VM.destroy ~__context ~self) vm_and_snapshots
     ) ;
-    SMPERF.debug "vm.migrate_send exiting vm:%s" vm_uuid ;
+    SXM.debug "vm.migrate_send exiting vm:%s" vm_uuid ;
     new_vm
   with e -> (
     error "Caught %s: cleaning up" (Printexc.to_string e) ;
@@ -1747,7 +1786,7 @@ let assert_can_migrate ~__context ~vm ~dest ~live:_ ~vdi_map ~vif_map ~options
     )
     vms_vdis ;
   (* operations required for migration *)
-  let required_sr_operations = [Smint.Vdi_mirror; Smint.Vdi_snapshot] in
+  let required_sr_operations = [Smint.Vdi_snapshot] in
   let host_from = Helpers.LocalObject source_host_ref in
   ( match migration_type ~__context ~remote with
   | `intra_pool ->

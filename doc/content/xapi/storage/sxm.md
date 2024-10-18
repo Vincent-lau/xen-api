@@ -178,7 +178,7 @@ The function takes several arguments:
 
 ```ocaml
 let migrate_send'  ~__context ~vm ~dest ~live ~vdi_map ~vif_map ~vgpu_map ~options =
-  SMPERF.debug "vm.migrate_send called vm:%s" (Db.VM.get_uuid ~__context ~self:vm);
+  SXM.debug "vm.migrate_send called vm:%s" (Db.VM.get_uuid ~__context ~self:vm);
 
   let open Xapi_xenops in
 
@@ -857,7 +857,7 @@ Now we destroy any extra mirror datapaths we set up previously:
 More housekeeping:
 
 ```ocaml
-    SMPERF.debug "vm.migrate_send: migration initiated vm:%s" vm_uuid;
+    SXM.debug "vm.migrate_send: migration initiated vm:%s" vm_uuid;
 
       (* In case when we do SXM on the same host (mostly likely a VDI
          migration), the VM's metadata in xenopsd will be in-place updated
@@ -902,7 +902,7 @@ Finally we get to the memory-image part of the migration:
       end;
 
       debug "Migration complete";
-      SMPERF.debug "vm.migrate_send: migration complete vm:%s" vm_uuid;
+      SXM.debug "vm.migrate_send: migration complete vm:%s" vm_uuid;
 ```
 
 Now we tidy up after ourselves:
@@ -1002,7 +1002,7 @@ Lastly, we destroy the VM record on the source:
           Xapi_vm_lifecycle.force_state_reset ~__context ~self:vm ~value:`Halted;
           List.iter (fun self -> Db.VM.destroy ~__context ~self) vm_and_snapshots
         end);
-    SMPERF.debug "vm.migrate_send exiting vm:%s" vm_uuid;
+    SXM.debug "vm.migrate_send exiting vm:%s" vm_uuid;
     new_vm
 ```
 
@@ -1412,7 +1412,7 @@ Here we are constructing a URI that we use to connect to the destination xapi. T
 Since we're about to perform a long-running operation that is stateful, we persist the state here so that if xapi is restarted we can cancel the operation and not leak VDI attaches. Normally in xapi code we would be doing VBD.plug operations to persist the state in the xapi db, but this is storage code so we have to use a different mechanism.
 
 ```ocaml
-    SMPERF.debug "mirror.copy: copy initiated local_vdi:%s dest_vdi:%s" vdi dest_vdi;
+    SXM.debug "mirror.copy: copy initiated local_vdi:%s dest_vdi:%s" vdi dest_vdi;
 
     Pervasiveext.finally (fun () ->
         debug "activating RW datapath %s on remote=%s/%s" remote_dp dest dest_vdi;
@@ -1444,7 +1444,7 @@ In this chunk of code we attach and activate the disk on the remote SR via the S
 Once the operation has terminated (either on success, error or cancellation), we remove the local attach and activations in the `with_activated_disk` function and the remote attach and activation by destroying the datapath on the remote SR. We then remove the persistent state relating to the copy.
 
 ```ocaml
-    SMPERF.debug "mirror.copy: copy complete local_vdi:%s dest_vdi:%s" vdi dest_vdi;
+    SXM.debug "mirror.copy: copy complete local_vdi:%s dest_vdi:%s" vdi dest_vdi;
 
     debug "setting remote=%s/%s content_id <- %s" dest dest_vdi local_vdi.content_id;
     Remote.VDI.set_content_id ~dbg ~sr:dest ~vdi:dest_vdi ~content_id:local_vdi.content_id;
@@ -1472,7 +1472,7 @@ Here we perform the list of cleanup operations. Theoretically. It seems we don't
 ```ocaml
 let start' ~task ~dbg ~sr ~vdi ~dp ~url ~dest =
   debug "Mirror.start sr:%s vdi:%s url:%s dest:%s" sr vdi url dest;
-  SMPERF.debug "mirror.start called sr:%s vdi:%s url:%s dest:%s" sr vdi url dest;
+  SXM.debug "mirror.start called sr:%s vdi:%s url:%s dest:%s" sr vdi url dest;
   let remote_url = Http.Url.of_string url in
   let module Remote = Client(struct let rpc = rpc ~srcstr:"smapiv2" ~dststr:"dst_smapiv2" remote_url end) in
 
@@ -1622,7 +1622,7 @@ As for copy we persist some state to disk to say that we're doing a mirror so we
     in
     debug "Done!";
 
-    SMPERF.debug "mirror.start: snapshot created, mirror initiated vdi:%s snapshot_of:%s"
+    SXM.debug "mirror.start: snapshot created, mirror initiated vdi:%s snapshot_of:%s"
       snapshot.vdi local_vdi.vdi ;
 
     on_fail := (fun () -> Local.VDI.destroy ~dbg ~sr ~vdi:snapshot.vdi) :: !on_fail;

@@ -919,51 +919,6 @@ functor
       let dbg = Debug_info.to_string di in
       Impl.get_by_name context ~dbg ~name
 
-    module DATA = struct
-      let copy_into context ~dbg ~sr ~vdi ~url ~dest =
-        info "DATA.copy_into dbg:%s sr:%s vdi:%s url:%s dest:%s" dbg
-          (s_of_sr sr) (s_of_vdi vdi) url (s_of_sr dest) ;
-        Impl.DATA.copy_into context ~dbg ~sr ~vdi ~url ~dest
-
-      let copy context ~dbg ~sr ~vdi ~dp ~url ~dest =
-        info "DATA.copy dbg:%s sr:%s vdi:%s url:%s dest:%s" dbg (s_of_sr sr)
-          (s_of_vdi vdi) url (s_of_sr dest) ;
-        Impl.DATA.copy context ~dbg ~sr ~vdi ~dp ~url ~dest
-
-      module MIRROR = struct
-        let start context ~dbg ~sr ~vdi ~dp ~url ~dest =
-          info "DATA.MIRROR.start dbg:%s sr:%s vdi:%s url:%s dest:%s" dbg
-            (s_of_sr sr) (s_of_vdi vdi) url (s_of_sr dest) ;
-          Impl.DATA.MIRROR.start context ~dbg ~sr ~vdi ~dp ~url ~dest
-
-        let stop context ~dbg ~id =
-          info "DATA.MIRROR.stop dbg:%s id:%s" dbg id ;
-          Impl.DATA.MIRROR.stop context ~dbg ~id
-
-        let list context ~dbg =
-          info "DATA.MIRROR.active dbg:%s" dbg ;
-          Impl.DATA.MIRROR.list context ~dbg
-
-        let stat context ~dbg ~id =
-          info "DATA.MIRROR.stat dbg:%s id:%s" dbg id ;
-          Impl.DATA.MIRROR.stat context ~dbg ~id
-
-        let receive_start context ~dbg ~sr ~vdi_info ~id ~similar =
-          info "DATA.MIRROR.receive_start dbg:%s sr:%s id:%s similar:[%s]" dbg
-            (s_of_sr sr) id
-            (String.concat "," similar) ;
-          Impl.DATA.MIRROR.receive_start context ~dbg ~sr ~vdi_info ~id ~similar
-
-        let receive_finalize context ~dbg ~id =
-          info "DATA.MIRROR.receive_finalize dbg:%s id:%s" dbg id ;
-          Impl.DATA.MIRROR.receive_finalize context ~dbg ~id
-
-        let receive_cancel context ~dbg ~id =
-          info "DATA.MIRROR.receive_cancel dbg:%s id:%s" dbg id ;
-          Impl.DATA.MIRROR.receive_cancel context ~dbg ~id
-      end
-    end
-
     module DP = struct
       let create _context ~dbg:_ ~id = id
 
@@ -1166,6 +1121,82 @@ functor
                       (Vdi.dp vdi_t)
                 }
         )
+    end
+
+    module DATA = struct
+      let copy context ~dbg ~sr ~vdi ~vm ~url ~dest =
+        info "DATA.copy dbg:%s sr:%s vdi:%s url:%s dest:%s" dbg (s_of_sr sr)
+          (s_of_vdi vdi) url (s_of_sr dest) ;
+        Impl.DATA.copy context ~dbg ~sr ~vdi ~vm ~url ~dest
+
+      module MIRROR = struct
+        let start context ~dbg ~sr ~vdi ~dp ~mirror_vm ~copy_vm ~url ~dest =
+          info "DATA.MIRROR.start dbg:%s sr:%s vdi:%s url:%s dest:%s" dbg
+            (s_of_sr sr) (s_of_vdi vdi) url (s_of_sr dest) ;
+          Impl.DATA.MIRROR.start context ~dbg ~sr ~vdi ~dp ~mirror_vm ~copy_vm
+            ~url ~dest
+
+        let stop context ~dbg ~id =
+          info "DATA.MIRROR.stop dbg:%s id:%s" dbg id ;
+          Impl.DATA.MIRROR.stop context ~dbg ~id
+
+        let list context ~dbg =
+          info "DATA.MIRROR.active dbg:%s" dbg ;
+          Impl.DATA.MIRROR.list context ~dbg
+
+        let stat context ~dbg ~id =
+          info "DATA.MIRROR.stat dbg:%s id:%s" dbg id ;
+          Impl.DATA.MIRROR.stat context ~dbg ~id
+
+        let receive_start context ~dbg ~sr ~vdi_info ~id ~similar =
+          info "DATA.MIRROR.receive_start dbg:%s sr:%s id:%s similar:[%s]" dbg
+            (s_of_sr sr) id
+            (String.concat "," similar) ;
+          Impl.DATA.MIRROR.receive_start context ~dbg ~sr ~vdi_info ~id ~similar
+
+        let receive_start2 context ~dbg ~sr ~vdi_info ~id ~similars ~vm =
+          info
+            "DATA.MIRROR.receive_start2 dbg:%s sr:%s id:%s similar:[%s] vm:%s"
+            dbg (s_of_sr sr) id
+            (String.concat "," similars)
+            (s_of_vm vm) ;
+          Impl.DATA.MIRROR.receive_start2 context ~dbg ~sr ~vdi_info ~id
+            ~similars ~vm
+
+        let receive_finalize context ~dbg ~id =
+          info "DATA.MIRROR.receive_finalize dbg:%s id:%s" dbg id ;
+          Impl.DATA.MIRROR.receive_finalize context ~dbg ~id
+
+        let receive_cancel context ~dbg ~id =
+          info "DATA.MIRROR.receive_cancel dbg:%s id:%s" dbg id ;
+          Impl.DATA.MIRROR.receive_cancel context ~dbg ~id
+
+        let import_activate context ~dbg ~dp ~sr ~vdi ~vm =
+          with_dbg ~name:"DATA.MIRROR.import_activate" ~dbg @@ fun di ->
+          info "%s DATA.MIRROR.import_activate dbg:%s dp:%s sr:%s vdi:%s vm:%s"
+            __FUNCTION__ di.log dp (s_of_sr sr) (s_of_vdi vdi) (s_of_vm vm) ;
+          (* let dbg = Debug_info.to_string di in *)
+          let attach_info = DP.attach_info context ~dbg:"nbd" ~sr ~vdi ~dp in
+          match Storage_migrate.tapdisk_of_attach_info attach_info with
+          | Some tapdev ->
+              let minor = Tapctl.get_minor tapdev in
+              let pid = Tapctl.get_tapdisk_pid tapdev in
+              let path =
+                Printf.sprintf "/var/run/blktap-control/nbdserver%d.%d" pid
+                  minor
+              in
+              debug "%s import_activate path %s" __FUNCTION__ path ;
+              path
+          | None ->
+              raise
+                (Storage_interface.Storage_error
+                   (Backend_error
+                      ( Api_errors.internal_error
+                      , [Printf.sprintf "No tapdisk attach info found"]
+                      )
+                   )
+                )
+      end
     end
 
     module SR = struct

@@ -17,6 +17,10 @@ open Lwt
 module F = Vhd_format.F.From_file (Vhd_format_lwt.IO)
 module In = Vhd_format.F.From_input (Input)
 
+module D = Debug.Make (struct let name = "vhd_impl" end)
+
+open D
+
 module Channel_In = Vhd_format.F.From_input (struct
   include Lwt
 
@@ -229,9 +233,10 @@ let stream_nbd _common c s prezeroed _ ?(progress = no_progress_bar) () =
     }
   in
 
-  Client.negotiate c "" >>= fun (server, _size, _flags) ->
+  Client.negotiate c "tapdisk_client" >>= fun (server, size, _flags) ->
   (* Work to do is: non-zero data to write + empty sectors if the
      target is not prezeroed *)
+  debug "nbd negotiate done, size is %Ld" size ;
   let total_work =
     let open Vhd_format.F in
     Int64.(
@@ -1013,9 +1018,25 @@ let write_stream common s destination destination_protocol prezeroed progress
       let host = Scanf.ksscanf host (fun _ _ -> host) "[%s@]" Fun.id in
       Lwt_unix.getaddrinfo host (string_of_int port) [] >>= fun he ->
       if he = [] then raise Not_found ;
+      List.iter
+        (fun h ->
+          match h.Unix.ai_addr with
+          | ADDR_UNIX addr ->
+              D.debug "%s socket addr %s to pass" __FUNCTION__ addr
+          | ADDR_INET (inet, port) ->
+              D.debug "%s socket inet %s port %d to pass" __FUNCTION__
+                (Unix.string_of_inet_addr inet)
+                port
+        )
+        he ;
 
       let sockaddr = (List.hd he).Unix.ai_addr in
       let sock = socket sockaddr in
+      (* Lwt_unix.set_blocking sock true ; *)
+      Lwt_unix.blocking sock >>= fun b ->
+      D.debug "This is a blocking: %b fd" b |> ignore ;
+      let xx : int = Lwt_unix.unix_file_descr sock |> Obj.magic in
+      D.debug "client side socket id for copy is %d" xx ;
       Lwt.catch
         (fun () -> Lwt_unix.connect sock sockaddr)
         (fun e -> Lwt_unix.close sock >>= fun () -> Lwt.fail e)
@@ -1115,6 +1136,7 @@ let write_stream common s destination destination_protocol prezeroed progress
       common c s prezeroed tar_filename_prefix ~progress ()
     >>= fun p ->
     c.Channels.close () >>= fun () ->
+    D.debug "write stream done, close channel" ;
     match p with
     | Some p ->
         let time = Unix.gettimeofday () -. start in

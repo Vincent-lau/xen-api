@@ -825,11 +825,7 @@ module Mux = struct
     let copy () ~dbg =
       with_dbg ~name:"DATA.copy" ~dbg @@ fun dbg -> Storage_migrate.copy ~dbg
 
-    let copy_into () ~dbg =
-      with_dbg ~name:"DATA.copy_into" ~dbg @@ fun dbg ->
-      Storage_migrate.copy_into ~dbg
-
-    module MIRROR = struct
+   module MIRROR = struct
       let start () ~dbg =
         with_dbg ~name:"DATA.MIRROR.start" ~dbg @@ fun dbg ->
         Storage_migrate.start ~dbg
@@ -848,15 +844,32 @@ module Mux = struct
 
       let receive_start () ~dbg =
         with_dbg ~name:"DATA.MIRROR.receive_start" ~dbg @@ fun {log= dbg; _} ->
-        Storage_migrate.receive_start ~dbg
+        Storage_migrate.Migrate.receive_start ~dbg
+
+      let receive_start2 () ~dbg =
+        with_dbg ~name:"DATA.MIRROR.receive_start2" ~dbg @@ fun {log= dbg; _} ->
+        Storage_migrate.Migrate.receive_start2 ~dbg
 
       let receive_finalize () ~dbg =
         with_dbg ~name:"DATA.MIRROR.receive_finalize" ~dbg
-        @@ fun {log= dbg; _} -> Storage_migrate.receive_finalize ~dbg
+        @@ fun {log= dbg; _} -> Storage_migrate.Migrate.receive_finalize ~dbg
 
       let receive_cancel () ~dbg =
         with_dbg ~name:"DATA.MIRROR.receive_cancel" ~dbg @@ fun {log= dbg; _} ->
-        Storage_migrate.receive_cancel ~dbg
+        Storage_migrate.Migrate.receive_cancel ~dbg
+
+      let import_activate () ~dbg ~dp ~sr ~vdi ~vm =
+        with_dbg ~name:"DATA.MIRROR.import_activate" ~dbg @@ fun di ->
+        info "%s DATA.MIRROR.import_activate dbg:%s dp:%s sr:%s vdi:%s vm:%s"
+          __FUNCTION__ dbg dp (s_of_sr sr) (s_of_vdi vdi) (s_of_vm vm) ;
+        let module C = StorageAPI (Idl.Exn.GenClient (struct
+          let rpc = of_sr sr
+        end)) in
+        let s =
+          C.DATA.MIRROR.import_activate (Debug_info.to_string di) dp sr vdi vm
+        in
+        debug "import_activate %s" s ;
+        s
     end
   end
 

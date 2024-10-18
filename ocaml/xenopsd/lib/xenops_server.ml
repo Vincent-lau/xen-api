@@ -2714,7 +2714,35 @@ and perform_exn ?subtask ?result (op : operation) (t : Xenops_task.task_handle)
             ) ;
             debug "VM.migrate: Synchronisation point 1"
           in
+          let clean_src_vm () =
+            debug
+              "VM.migrate: clean up src vm before allowing destination to \
+               proceed" ;
+            (* cleanup tmp src VM *)
+            let atomics =
+              [
+                VM_hook_script_stable
+                  ( id
+                  , Xenops_hooks.VM_pre_destroy
+                  , Xenops_hooks.reason__suspend
+                  , new_src_id
+                  )
+              ]
+              @ atomics_of_operation (VM_shutdown (new_src_id, None))
+              @ [
+                  VM_hook_script_stable
+                    ( id
+                    , Xenops_hooks.VM_post_destroy
+                    , Xenops_hooks.reason__suspend
+                    , new_src_id
+                    )
+                ; VM_remove new_src_id
+                ]
+            in
+            perform_atomics atomics t
+          in
           let final_handshake () =
+            clean_src_vm () ;
             Handshake.send vm_fd Handshake.Success ;
             debug "VM.migrate: Synchronisation point 3" ;
             match Handshake.recv vm_fd with
@@ -2772,29 +2800,7 @@ and perform_exn ?subtask ?result (op : operation) (t : Xenops_task.task_handle)
                   save ~vgpu_fd:(FD vgpu_fd) ()
               ) ;
               final_handshake ()
-      ) ;
-      (* cleanup tmp src VM *)
-      let atomics =
-        [
-          VM_hook_script_stable
-            ( id
-            , Xenops_hooks.VM_pre_destroy
-            , Xenops_hooks.reason__suspend
-            , new_src_id
-            )
-        ]
-        @ atomics_of_operation (VM_shutdown (new_src_id, None))
-        @ [
-            VM_hook_script_stable
-              ( id
-              , Xenops_hooks.VM_post_destroy
-              , Xenops_hooks.reason__suspend
-              , new_src_id
-              )
-          ; VM_remove new_src_id
-          ]
-      in
-      perform_atomics atomics t
+      )
   | VM_receive_memory
       {
         vmr_id= id

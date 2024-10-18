@@ -251,6 +251,8 @@ let string_of_vdi_info (x : vdi_info) = Jsonrpc.to_string (rpc_of vdi_info x)
     "datapaths". *)
 type dp = string [@@deriving rpcty]
 
+type sock_path = string [@@deriving rpcty]
+
 type dp_stat_t = {
     superstate: Vdi_automaton.state
   ; dps: (string * Vdi_automaton.state) list
@@ -442,6 +444,8 @@ module StorageAPI (R : RPC) = struct
   let vm_p = Param.mk ~name:"vm" Vm.t
 
   let dp_p = Param.mk ~name:"dp" dp
+
+  let sock_path_p = Param.mk ~name:"sock_path" sock_path
 
   let device_config_p =
     Param.mk ~name:"device_config"
@@ -976,28 +980,13 @@ module StorageAPI (R : RPC) = struct
         ~description:["when true, verify remote server certificate"]
         Types.bool
 
-    (** [copy_into task sr vdi url sr2] copies the data from [vdi] into a remote
-        system [url]'s [sr2] *)
-    let copy_into =
-      let dest_vdi_p = Param.mk ~name:"dest_vdi" Vdi.t in
-      declare "DATA.copy_into" []
-        (dbg_p
-        @-> sr_p
-        @-> vdi_p
-        @-> url_p
-        @-> dest_p
-        @-> dest_vdi_p
-        @-> verify_dest_p
-        @-> returning task_id_p err
-        )
-
     let copy =
       let result_p = Param.mk ~name:"task_id" Task.id in
       declare "DATA.copy" []
         (dbg_p
         @-> sr_p
         @-> vdi_p
-        @-> dp_p
+        @-> vm_p
         @-> url_p
         @-> dest_p
         @-> verify_dest_p
@@ -1013,6 +1002,8 @@ module StorageAPI (R : RPC) = struct
           @-> sr_p
           @-> vdi_p
           @-> dp_p
+          @-> vm_p
+          @-> vm_p
           @-> url_p
           @-> dest_p
           @-> verify_dest_p
@@ -1042,6 +1033,19 @@ module StorageAPI (R : RPC) = struct
           @-> returning result err
           )
 
+      let receive_start2 =
+        let similar_p = Param.mk ~name:"similar" Mirror.similars in
+        let result = Param.mk ~name:"result" Mirror.mirror_receive_result in
+        declare "DATA.MIRROR.receive_start2" []
+          (dbg_p
+          @-> sr_p
+          @-> VDI.vdi_info_p
+          @-> id_p
+          @-> similar_p
+          @-> vm_p
+          @-> returning result err
+          )
+
       let receive_finalize =
         declare "DATA.MIRROR.receive_finalize" []
           (dbg_p @-> id_p @-> returning unit_p err)
@@ -1055,6 +1059,16 @@ module StorageAPI (R : RPC) = struct
           Param.mk ~name:"mirrors" TypeCombinators.(list (pair Mirror.(id, t)))
         in
         declare "DATA.MIRROR.list" [] (dbg_p @-> returning result_p err)
+
+      let import_activate =
+        declare "DATA.MIRROR.import_activate" []
+          (dbg_p
+          @-> dp_p
+          @-> sr_p
+          @-> vdi_p
+          @-> vm_p
+          @-> returning sock_path_p err
+          )
     end
   end
 
@@ -1344,23 +1358,12 @@ module type Server_impl = sig
   val get_by_name : context -> dbg:debug_info -> name:string -> sr * vdi_info
 
   module DATA : sig
-    val copy_into :
-         context
-      -> dbg:debug_info
-      -> sr:sr
-      -> vdi:vdi
-      -> url:string
-      -> dest:sr
-      -> dest_vdi:vdi
-      -> verify_dest:bool
-      -> Task.id
-
     val copy :
          context
       -> dbg:debug_info
       -> sr:sr
       -> vdi:vdi
-      -> dp:dp
+      -> vm:vm
       -> url:string
       -> dest:sr
       -> verify_dest:bool
@@ -1373,6 +1376,8 @@ module type Server_impl = sig
         -> sr:sr
         -> vdi:vdi
         -> dp:dp
+        -> mirror_vm:vm
+        -> copy_vm:vm
         -> url:string
         -> dest:sr
         -> verify_dest:bool
@@ -1391,11 +1396,30 @@ module type Server_impl = sig
         -> similar:Mirror.similars
         -> Mirror.mirror_receive_result
 
+      val receive_start2 :
+           context
+        -> dbg:debug_info
+        -> sr:sr
+        -> vdi_info:vdi_info
+        -> id:Mirror.id
+        -> similars:Mirror.similars
+        -> vm:vm
+        -> Mirror.mirror_receive_result
+
       val receive_finalize : context -> dbg:debug_info -> id:Mirror.id -> unit
 
       val receive_cancel : context -> dbg:debug_info -> id:Mirror.id -> unit
 
       val list : context -> dbg:debug_info -> (Mirror.id * Mirror.t) list
+
+      val import_activate :
+           context
+        -> dbg:debug_info
+        -> dp:dp
+        -> sr:sr
+        -> vdi:vdi
+        -> vm:vm
+        -> sock_path
     end
   end
 
@@ -1549,19 +1573,21 @@ module Server (Impl : Server_impl) () = struct
         Impl.VDI.list_changed_blocks () ~dbg ~sr ~vdi_from ~vdi_to
     ) ;
     S.get_by_name (fun dbg name -> Impl.get_by_name () ~dbg ~name) ;
-    S.DATA.copy_into (fun dbg sr vdi url dest dest_vdi verify_dest ->
-        Impl.DATA.copy_into () ~dbg ~sr ~vdi ~url ~dest ~dest_vdi ~verify_dest
+    S.DATA.copy (fun dbg sr vdi vm url dest verify_dest ->
+        Impl.DATA.copy () ~dbg ~sr ~vdi ~vm ~url ~dest ~verify_dest
     ) ;
-    S.DATA.copy (fun dbg sr vdi dp url dest verify_dest ->
-        Impl.DATA.copy () ~dbg ~sr ~vdi ~dp ~url ~dest ~verify_dest
-    ) ;
-    S.DATA.MIRROR.start (fun dbg sr vdi dp url dest verify_dest ->
-        Impl.DATA.MIRROR.start () ~dbg ~sr ~vdi ~dp ~url ~dest ~verify_dest
+    S.DATA.MIRROR.start
+      (fun dbg sr vdi dp mirror_vm copy_vm url dest verify_dest ->
+        Impl.DATA.MIRROR.start () ~dbg ~sr ~vdi ~dp ~mirror_vm ~copy_vm ~url
+          ~dest ~verify_dest
     ) ;
     S.DATA.MIRROR.stop (fun dbg id -> Impl.DATA.MIRROR.stop () ~dbg ~id) ;
     S.DATA.MIRROR.stat (fun dbg id -> Impl.DATA.MIRROR.stat () ~dbg ~id) ;
     S.DATA.MIRROR.receive_start (fun dbg sr vdi_info id similar ->
         Impl.DATA.MIRROR.receive_start () ~dbg ~sr ~vdi_info ~id ~similar
+    ) ;
+    S.DATA.MIRROR.receive_start2 (fun dbg sr vdi_info id similars vm ->
+        Impl.DATA.MIRROR.receive_start2 () ~dbg ~sr ~vdi_info ~id ~similars ~vm
     ) ;
     S.DATA.MIRROR.receive_cancel (fun dbg id ->
         Impl.DATA.MIRROR.receive_cancel () ~dbg ~id
@@ -1570,6 +1596,9 @@ module Server (Impl : Server_impl) () = struct
         Impl.DATA.MIRROR.receive_finalize () ~dbg ~id
     ) ;
     S.DATA.MIRROR.list (fun dbg -> Impl.DATA.MIRROR.list () ~dbg) ;
+    S.DATA.MIRROR.import_activate (fun dbg dp sr vdi vm ->
+        Impl.DATA.MIRROR.import_activate () ~dbg ~dp ~sr ~vdi ~vm
+    ) ;
     S.Policy.get_backend_vm (fun dbg vm sr vdi ->
         Impl.Policy.get_backend_vm () ~dbg ~vm ~sr ~vdi
     ) ;
