@@ -465,6 +465,22 @@ let dbg_and_tracing_of_task task =
 (** This module [Migrate] consists of the concrete implementations of the migration
 part of SMAPI. *)
 module Migrate = struct
+  let find_local_vdi ~dbg ~sr ~vdi =
+    try
+      let vdis, _ = Local.SR.scan2 dbg sr in
+      match List.find_opt (fun x -> x.vdi = vdi) vdis with
+      | None ->
+          Printf.sprintf "Local VDI %s not found"
+            (Storage_interface.Vdi.string_of vdi)
+          |> failwith
+      | Some vdi ->
+          vdi
+    with
+    | Storage_error (Backend_error (code, params)) ->
+        raise (Storage_error (Backend_error (code, params)))
+    | e ->
+        raise (Storage_error (Internal_error (Printexc.to_string e)))
+
   (** [copy_into_vdi] is similar to [copy_into_sr] but requires a [dest_vdi] parameter *)
   let copy_into_vdi ~task ~dbg ~sr ~vdi ~url ~dest ~dest_vdi ~verify_dest =
     let remote_url = Storage_utils.connection_args_of_uri ~verify_dest url in
@@ -496,16 +512,8 @@ module Migrate = struct
           )
     in
     let dest_content_id = remote_vdi.content_id in
-    (* Find the local VDI *)
-    let vdis = Local.SR.scan dbg sr in
-    let local_vdi =
-      try List.find (fun x -> x.vdi = vdi) vdis
-      with Not_found ->
-        failwith
-          (Printf.sprintf "Local VDI %s not found"
-             (Storage_interface.Vdi.string_of vdi)
-          )
-    in
+    let local_vdi = find_local_vdi ~dbg ~sr ~vdi in
+
     debug "copy local content_id=%s" local_vdi.content_id ;
     debug "copy remote content_id=%s" dest_content_id ;
     if local_vdi.virtual_size > remote_vdi.virtual_size then (
@@ -727,13 +735,8 @@ module Migrate = struct
         Storage_utils.rpc ~srcstr:"smapiv2" ~dststr:"dst_smapiv2"
           (Storage_utils.connection_args_of_uri ~verify_dest url)
     end)) in
-    (* Find the local VDI *)
     let dbg = dbg_and_tracing_of_task task in
-    let vdis = Local.SR.scan dbg sr in
-    let local_vdi =
-      try List.find (fun x -> x.vdi = vdi) vdis
-      with Not_found -> failwith "Local VDI not found"
-    in
+    let local_vdi = find_local_vdi ~dbg ~sr ~vdi in
     let id = State.mirror_id_of (sr, local_vdi.vdi) in
     debug "Adding to active local mirrors before sending: id=%s" id ;
     let alm =
