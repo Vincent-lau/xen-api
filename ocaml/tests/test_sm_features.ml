@@ -285,7 +285,7 @@ module CompatSMFeatures = Generic.MakeStateless (struct
     `QuickAndAutoDocumented
       [
         ( List.combine r1.smapiv2_features r2.smapiv2_features
-        , []
+        , r1.smapiv2_features
         )
       ]
 end)
