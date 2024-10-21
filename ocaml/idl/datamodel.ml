@@ -4994,10 +4994,20 @@ module SM = struct
                 , "capabilities of the SM plugin, with capability version \
                    numbers"
                 )
+              ; ( Changed
+                , "24.34.0"
+                , "features are now pool-wide, instead of what is available on \
+                   the coordinator sm"
+                )
               ]
             ~ty:(Map (String, Int))
             "features"
             "capabilities of the SM plugin, with capability version numbers"
+            ~default_value:(Some (VMap []))
+        ; field ~in_oss_since:None ~qualifier:DynamicRO ~lifecycle:[]
+            ~ty:(Map (Ref _host, Set String)) ~internal_only:true
+            "host_pending_features"
+            "SM features that are waiting to be declared per host."
             ~default_value:(Some (VMap []))
         ; field
             ~lifecycle:[(Published, rel_miami, "additional configuration")]
@@ -5025,6 +5035,26 @@ module SM = struct
         ]
       ()
 end
+
+(* module Sm_feature = struct
+     let t =
+       let lifecycle = [] in
+       create_obj ~in_db:true ~persist:PersistNothing
+         ~gen_constructor_destructor:false ~lifecycle ~in_oss_since:None
+         ~name:_sm_feature
+         ~descr:"sm features, in the form (feature_name, version)"
+         ~gen_events:false ~messages:[] ~doccomments:[]
+         ~messages_default_allowed_roles:(Some [])
+           (* No messages, so no roles allowed to use them *)
+         ~contents:
+           [
+             field ~qualifier:DynamicRO ~lifecycle ~ty:String "feature"
+               "The sm feature name"
+           ; field ~qualifier:DynamicRO ~lifecycle ~ty:Int "version"
+               "The sm feature version"
+           ]
+         ()
+   end *)
 
 module LVHD = struct
   let enable_thin_provisioning =
