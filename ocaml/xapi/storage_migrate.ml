@@ -722,7 +722,6 @@ module Migrate = struct
           (Storage_utils.connection_args_of_uri ~verify_dest url)
     end)) in
     (* Find the local VDI *)
-    let dbg = dbg_and_tracing_of_task task in
     let vdis = Local.SR.scan dbg sr in
     let local_vdi =
       try List.find (fun x -> x.vdi = vdi) vdis
