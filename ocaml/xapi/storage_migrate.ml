@@ -456,9 +456,11 @@ let add_to_sm_config vdi_info key value =
   let vdi_info = remove_from_sm_config vdi_info key in
   {vdi_info with sm_config= (key, value) :: vdi_info.sm_config}
 
-(** This module [Migrate] consists of the concrete implementations of the migration
-part of SMAPI. *)
-module Migrate = struct
+(** This module [MigrateLocal] consists of the concrete implementations of the 
+migration part of SMAPI. Functions inside this module are sender driven, which means
+they tend to be executed on the sender side. although there is not a hard rule
+on what is executed on the sender side, this provides some heuristics. *)
+module MigrateLocal = struct
   (** [copy_into_vdi] is similar to [copy_into_sr] but requires a [dest_vdi] parameter *)
   let copy_into_vdi ~task ~dbg ~sr ~vdi ~url ~dest ~dest_vdi ~verify_dest =
     let remote_url = Storage_utils.connection_args_of_uri ~verify_dest url in
@@ -1103,7 +1105,11 @@ module Migrate = struct
       )
       recv_ops ;
     State.clear ()
+end
 
+(** module [MigrateRemote] is similar to [MigrateLocal], but most of these functions
+tend to be executed on the receiver side. *)
+module MigrateRemote = struct
   let receive_start ~dbg ~sr ~vdi_info ~id ~similar =
     let on_fail : (unit -> unit) list ref = ref [] in
     let vdis = Local.SR.scan dbg sr in
@@ -1370,36 +1376,36 @@ let with_task_and_thread ~dbg f =
 
 let copy ~dbg ~sr ~vdi ~url ~dest ~verify_dest =
   with_task_and_thread ~dbg (fun task ->
-      Migrate.copy_into_sr ~task ~dbg:(Debug_info.to_string dbg) ~sr ~vdi ~url
-        ~dest ~verify_dest
+      MigrateLocal.copy_into_sr ~task ~dbg:(Debug_info.to_string dbg) ~sr ~vdi
+        ~url ~dest ~verify_dest
   )
 
 let start ~dbg ~sr ~vdi ~dp ~url ~dest ~verify_dest =
   with_task_and_thread ~dbg (fun task ->
-      Migrate.start ~task ~dbg:(Debug_info.to_string dbg) ~sr ~vdi ~dp ~url
+      MigrateLocal.start ~task ~dbg:(Debug_info.to_string dbg) ~sr ~vdi ~dp ~url
         ~dest ~verify_dest
   )
 
 (* XXX: PR-1255: copy the xenopsd 'raise Exception' pattern *)
 let stop ~dbg ~id =
-  try Migrate.stop ~dbg ~id with
+  try MigrateLocal.stop ~dbg ~id with
   | Storage_error (Backend_error (code, params))
   | Api_errors.Server_error (code, params) ->
       raise (Storage_error (Backend_error (code, params)))
   | e ->
       raise e
 
-let stat = Migrate.stat
+let list = MigrateLocal.list
 
-let receive_start = Migrate.receive_start
+let killall = MigrateLocal.killall
 
-let receive_finalize = Migrate.receive_finalize
+let stat = MigrateLocal.stat
 
-let receive_cancel = Migrate.receive_cancel
+let receive_start = MigrateRemote.receive_start
 
-let list = Migrate.list
+let receive_finalize = MigrateRemote.receive_finalize
 
-let killall = Migrate.killall
+let receive_cancel = MigrateRemote.receive_cancel
 
 (* The remote end of this call, SR.update_snapshot_info_dest, is implemented in
  * the SMAPIv1 section of storage_migrate.ml. It needs to access the setters
