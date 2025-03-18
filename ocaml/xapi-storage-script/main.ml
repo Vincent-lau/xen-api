@@ -16,6 +16,7 @@ module Plugin_client = Xapi_storage.Plugin.Plugin (Rpc_lwt.GenClient ())
 module Volume_client = Xapi_storage.Control.Volume (Rpc_lwt.GenClient ())
 module Sr_client = Xapi_storage.Control.Sr (Rpc_lwt.GenClient ())
 module Datapath_client = Xapi_storage.Data.Datapath (Rpc_lwt.GenClient ())
+module Data_client = Xapi_storage.Data.Data (Rpc_lwt.GenClient ())
 open Private.Lib
 
 let ( >>= ) = Lwt.bind
@@ -852,6 +853,8 @@ let convert_implementation = function
 
 let wrap = Rpc_lwt.T.put
 
+let u name _ = failwith ("Unimplemented: " ^ name)
+
 let volume_rpc ~volume_script_dir = fork_exec_rpc ~script_dir:volume_script_dir
 
 (** This module contains the metadata needed for translations to SMAPIv3 to work*)
@@ -948,6 +951,7 @@ module QueryImpl (M : META) = struct
         ; configuration= response.Xapi_storage.Plugin.configuration
         ; required_cluster_stack=
             response.Xapi_storage.Plugin.required_cluster_stack
+        ; migrate_version= Smapiv3
         }
     in
     wrap th
@@ -1210,7 +1214,7 @@ module SRImpl (M : META) = struct
          )
     |> wrap
 
-  let sr_scan2_impl dbg sr =
+  let sr_scan2 dbg sr =
     let sr_uuid = Storage_interface.Sr.string_of sr in
     let get_sr_info sr =
       return_volume_rpc (fun () -> Sr_client.stat (volume_rpc ~dbg) dbg sr)
@@ -1293,7 +1297,9 @@ module SRImpl (M : META) = struct
           in
           fail Storage_interface.(Errors.Sr_unhealthy (sr_uuid, health))
     in
-    Attached_SRs.find sr >>>= stat_with_retry |> wrap
+    Attached_SRs.find sr >>>= stat_with_retry
+
+  let sr_scan2_impl dbg sr = sr_scan2 dbg sr |> wrap
 
   let sr_stat_impl dbg sr =
     Attached_SRs.find sr
@@ -1334,6 +1340,7 @@ module VDIImpl (M : META) = struct
 
   module Compat = Compat (struct let version = M.version end)
 
+  (* TODO add these helper functions into its own module *)
   let set ~dbg ~sr ~vdi ~key ~value =
     (* this is wrong, we loose the VDI type, but old pvsproxy didn't have
      * Volume.set and Volume.unset *)
@@ -1401,39 +1408,47 @@ module VDIImpl (M : META) = struct
     choose_datapath response >>>= fun (rpc, _datapath, uri) ->
     return_data_rpc (fun () -> Datapath_client.attach (rpc ~dbg) dbg uri domain)
 
-  let vdi_create_impl dbg sr (vdi_info : Storage_interface.vdi_info) =
-    Attached_SRs.find sr
-    >>>= (fun sr ->
-           return_volume_rpc (fun () ->
-               Volume_client.create
-                 (volume_rpc ~dbg ~compat_out:Compat.compat_out_volume)
-                 dbg sr vdi_info.Storage_interface.name_label
-                 vdi_info.name_description vdi_info.virtual_size
-                 vdi_info.sharable
-           )
-           >>>= update_keys ~dbg ~sr ~key:_vdi_type_key
-                  ~value:(match vdi_info.ty with "" -> None | s -> Some s)
-           >>>= fun response -> return (vdi_of_volume response)
-         )
-    |> wrap
-
-  let vdi_destroy_impl dbg sr vdi' =
-    (let vdi = Storage_interface.Vdi.string_of vdi' in
-     Attached_SRs.find sr >>>= fun sr ->
-     stat ~dbg ~sr ~vdi >>>= fun response ->
-     (* Destroy any clone-on-boot volume that might exist *)
-     ( match
-         List.assoc_opt _clone_on_boot_key response.Xapi_storage.Control.keys
-       with
-     | None ->
-         return ()
-     | Some _temporary ->
-         (* Destroy the temporary disk we made earlier *)
-         destroy ~dbg ~sr ~vdi
-     )
-     >>>= fun () -> destroy ~dbg ~sr ~vdi
+  let vdi_create dbg sr (vdi_info : Storage_interface.vdi_info) =
+    Attached_SRs.find sr >>>= fun sr ->
+    return_volume_rpc (fun () ->
+        Volume_client.create
+          (volume_rpc ~dbg ~compat_out:Compat.compat_out_volume)
+          dbg sr vdi_info.Storage_interface.name_label vdi_info.name_description
+          vdi_info.virtual_size vdi_info.sharable
     )
-    |> wrap
+    >>>= update_keys ~dbg ~sr ~key:_vdi_type_key
+           ~value:(match vdi_info.ty with "" -> None | s -> Some s)
+    >>>= fun response ->
+    List.fold_left
+      (fun vdi (k, v) ->
+        vdi
+        >>>= update_keys ~dbg ~sr
+               ~key:(_sm_config_prefix_key ^ k)
+               ~value:(Some v)
+      )
+      (return response) vdi_info.sm_config
+    >>>= fun response -> return (vdi_of_volume response)
+
+  let vdi_create_impl dbg sr (vdi_info : Storage_interface.vdi_info) =
+    vdi_create dbg sr vdi_info |> wrap
+
+  let vdi_destroy dbg sr vdi' =
+    let vdi = Storage_interface.Vdi.string_of vdi' in
+    Attached_SRs.find sr >>>= fun sr ->
+    stat ~dbg ~sr ~vdi >>>= fun response ->
+    (* Destroy any clone-on-boot volume that might exist *)
+    ( match
+        List.assoc_opt _clone_on_boot_key response.Xapi_storage.Control.keys
+      with
+    | None ->
+        return ()
+    | Some _temporary ->
+        (* Destroy the temporary disk we made earlier *)
+        destroy ~dbg ~sr ~vdi
+    )
+    >>>= fun () -> destroy ~dbg ~sr ~vdi
+
+  let vdi_destroy_impl dbg sr vdi = vdi_destroy dbg sr vdi |> wrap
 
   let vdi_snapshot_impl dbg sr vdi_info =
     Attached_SRs.find sr
@@ -1467,15 +1482,13 @@ module VDIImpl (M : META) = struct
          )
     |> wrap
 
-  let vdi_clone_impl dbg sr vdi_info =
-    Attached_SRs.find sr
-    >>>= (fun sr ->
-           clone ~dbg ~sr
-             ~vdi:
-               (Storage_interface.Vdi.string_of vdi_info.Storage_interface.vdi)
-           >>>= fun response -> return (vdi_of_volume response)
-         )
-    |> wrap
+  let vdi_clone dbg sr vdi_info =
+    Attached_SRs.find sr >>>= fun sr ->
+    clone ~dbg ~sr
+      ~vdi:(Storage_interface.Vdi.string_of vdi_info.Storage_interface.vdi)
+    >>>= fun response -> return (vdi_of_volume response)
+
+  let vdi_clone_impl dbg sr vdi_info = vdi_clone dbg sr vdi_info |> wrap
 
   let vdi_set_name_label_impl dbg sr vdi' new_name_label =
     (let vdi = Storage_interface.Vdi.string_of vdi' in
@@ -1496,18 +1509,19 @@ module VDIImpl (M : META) = struct
     )
     |> wrap
 
-  let vdi_resize_impl dbg sr vdi' new_size =
-    (let vdi = Storage_interface.Vdi.string_of vdi' in
-     Attached_SRs.find sr >>>= fun sr ->
-     return_volume_rpc (fun () ->
-         Volume_client.resize (volume_rpc ~dbg) dbg sr vdi new_size
-     )
-     >>>= fun () ->
-     (* Now call Volume.stat to discover the size *)
-     stat ~dbg ~sr ~vdi >>>= fun response ->
-     return response.Xapi_storage.Control.virtual_size
+  let vdi_resize dbg sr vdi' new_size =
+    let vdi = Storage_interface.Vdi.string_of vdi' in
+    Attached_SRs.find sr >>>= fun sr ->
+    return_volume_rpc (fun () ->
+        Volume_client.resize (volume_rpc ~dbg) dbg sr vdi new_size
     )
-    |> wrap
+    >>>= fun () ->
+    (* Now call Volume.stat to discover the size *)
+    stat ~dbg ~sr ~vdi >>>= fun response ->
+    return response.Xapi_storage.Control.virtual_size
+
+  let vdi_resize_impl dbg sr vdi new_size =
+    vdi_resize dbg sr vdi new_size |> wrap
 
   let vdi_stat_impl dbg sr vdi' =
     (let vdi = Storage_interface.Vdi.string_of vdi' in
@@ -1525,51 +1539,53 @@ module VDIImpl (M : META) = struct
          )
     |> wrap
 
-  let vdi_attach3_impl dbg dp sr vdi' vm _readwrite =
-    (let vdi = Storage_interface.Vdi.string_of vdi' in
-     let domain = domain_of ~dp ~vm in
-     vdi_attach_common dbg sr vdi domain >>>= fun response ->
-     return
-       {
-         Storage_interface.implementations=
-           List.map convert_implementation
-             response.Xapi_storage.Data.implementations
-       }
-    )
-    |> wrap
+  let vdi_attach3 dbg dp sr vdi' vm _readwrite =
+    let vdi = Storage_interface.Vdi.string_of vdi' in
+    let domain = domain_of ~dp ~vm in
+    vdi_attach_common dbg sr vdi domain >>>= fun response ->
+    return
+      {
+        Storage_interface.implementations=
+          List.map convert_implementation
+            response.Xapi_storage.Data.implementations
+      }
+
+  let vdi_attach3_impl dbg dp sr vdi vm readwrite =
+    vdi_attach3 dbg dp sr vdi vm readwrite |> wrap
 
   let vdi_activate_common dbg dp sr vdi' vm readonly =
-    (let vdi = Storage_interface.Vdi.string_of vdi' in
-     let domain = domain_of ~dp ~vm in
-     Attached_SRs.find sr >>>= fun sr ->
-     (* Discover the URIs using Volume.stat *)
-     stat ~dbg ~sr ~vdi >>>= fun response ->
-     (* If we have a clone-on-boot volume then use that instead *)
-     ( match
-         List.assoc_opt _clone_on_boot_key response.Xapi_storage.Control.keys
-       with
-     | None ->
-         return response
-     | Some temporary ->
-         stat ~dbg ~sr ~vdi:temporary
-     )
-     >>>= fun response ->
-     choose_datapath response >>>= fun (rpc, _datapath, uri) ->
-     return_data_rpc (fun () ->
-         let rpc = rpc ~dbg in
-         if readonly then
-           Datapath_client.activate_readonly rpc dbg uri domain
-         else
-           Datapath_client.activate rpc dbg uri domain
-     )
+    let vdi = Storage_interface.Vdi.string_of vdi' in
+    let domain = domain_of ~dp ~vm in
+    Attached_SRs.find sr >>>= fun sr ->
+    (* Discover the URIs using Volume.stat *)
+    stat ~dbg ~sr ~vdi >>>= fun response ->
+    (* If we have a clone-on-boot volume then use that instead *)
+    ( match
+        List.assoc_opt _clone_on_boot_key response.Xapi_storage.Control.keys
+      with
+    | None ->
+        return response
+    | Some temporary ->
+        stat ~dbg ~sr ~vdi:temporary
     )
-    |> wrap
+    >>>= fun response ->
+    choose_datapath response >>>= fun (rpc, _datapath, uri) ->
+    return_data_rpc (fun () ->
+        let rpc = rpc ~dbg in
+        if readonly then
+          Datapath_client.activate_readonly rpc dbg uri domain
+        else
+          Datapath_client.activate rpc dbg uri domain
+    )
 
-  let vdi_activate3_impl dbg dp sr vdi' vm' =
-    vdi_activate_common dbg dp sr vdi' vm' false
+  let vdi_activate3 dbg dp sr vdi vm =
+    vdi_activate_common dbg dp sr vdi vm false
+
+  let vdi_activate3_impl dbg dp sr vdi vm =
+    vdi_activate3 dbg dp sr vdi vm |> wrap
 
   let vdi_activate_readonly_impl dbg dp sr vdi' vm' =
-    vdi_activate_common dbg dp sr vdi' vm' true
+    vdi_activate_common dbg dp sr vdi' vm' true |> wrap
 
   let vdi_deactivate_impl dbg dp sr vdi' vm =
     (let vdi = Storage_interface.Vdi.string_of vdi' in
@@ -1752,6 +1768,9 @@ module VDIImpl (M : META) = struct
     let vdi = Storage_interface.Vdi.string_of vdi in
     let* () = unset ~dbg ~sr ~vdi ~key:(_sm_config_prefix_key ^ key) in
     return ()
+
+  (* TODO implement similar content for SMAPIv3*)
+  let similar_content_impl _dbg _sr _vdi = wrap @@ return []
 end
 
 module DPImpl (M : META) = struct
@@ -1787,60 +1806,303 @@ end
 
 module DATAImpl (M : META) = struct
   module VDI = VDIImpl (M)
+  module SR = SRImpl (M)
+  module DP = DPImpl (M)
+  open Storage_interface
 
-  module MIRROR = struct
-    let data_import_activate_impl dbg _dp sr vdi' vm' =
-      wrap
-      @@
-      let vdi = Storage_interface.Vdi.string_of vdi' in
-      let domain = Storage_interface.Vm.string_of vm' in
-      Attached_SRs.find sr >>>= fun sr ->
-      (* Discover the URIs using Volume.stat *)
-      VDI.stat ~dbg ~sr ~vdi >>>= fun response ->
-      ( match
-          List.assoc_opt _clone_on_boot_key response.Xapi_storage.Control.keys
-        with
-      | None ->
-          return response
-      | Some temporary ->
-          VDI.stat ~dbg ~sr ~vdi:temporary
+  let stat dbg sr vdi' _vm key =
+    let convert_key = function
+      | Mirror.CopyV1 k ->
+          Data_client.CopyV1 k
+      | Mirror.MirrorV1 k ->
+          Data_client.MirrorV1 k
+    in
+
+    let vdi = Storage_interface.Vdi.string_of vdi' in
+    Attached_SRs.find sr >>>= fun sr ->
+    VDI.stat ~dbg ~sr ~vdi >>>= fun response ->
+    ( match
+        List.assoc_opt _clone_on_boot_key response.Xapi_storage.Control.keys
+      with
+    | None ->
+        return response
+    | Some temporary ->
+        VDI.stat ~dbg ~sr ~vdi:temporary
+    )
+    >>>= fun response ->
+    choose_datapath response >>>= fun (rpc, _datapath, _uri) ->
+    let key = convert_key key in
+    return_data_rpc (fun () -> Data_client.stat (rpc ~dbg) dbg key)
+    >>>= function
+    | {failed; complete; progress} ->
+        return Storage_interface.Mirror.{failed; complete; progress}
+
+  let stat_impl dbg sr vdi vm key = wrap @@ stat dbg sr vdi vm key
+
+  let mirror dbg sr vdi' vm' remote =
+    let vdi = Storage_interface.Vdi.string_of vdi' in
+    let domain = Storage_interface.Vm.string_of vm' in
+    Attached_SRs.find sr >>>= fun sr ->
+    VDI.stat ~dbg ~sr ~vdi >>>= fun response ->
+    ( match
+        List.assoc_opt _clone_on_boot_key response.Xapi_storage.Control.keys
+      with
+    | None ->
+        return response
+    | Some temporary ->
+        VDI.stat ~dbg ~sr ~vdi:temporary
+    )
+    >>>= fun response ->
+    choose_datapath response >>>= fun (rpc, _datapath, uri) ->
+    return_data_rpc (fun () ->
+        Data_client.mirror (rpc ~dbg) dbg uri domain remote
+    )
+    >>>= function
+    | CopyV1 v ->
+        return (Storage_interface.Mirror.CopyV1 v)
+    | MirrorV1 v ->
+        return (Storage_interface.Mirror.MirrorV1 v)
+
+  let mirror_impl dbg sr vdi vm remote = wrap @@ mirror dbg sr vdi vm remote
+
+  let data_import_activate_impl dbg _dp sr vdi' vm' =
+    wrap
+    @@
+    let vdi = Storage_interface.Vdi.string_of vdi' in
+    let domain = Storage_interface.Vm.string_of vm' in
+    Attached_SRs.find sr >>>= fun sr ->
+    (* Discover the URIs using Volume.stat *)
+    VDI.stat ~dbg ~sr ~vdi >>>= fun response ->
+    ( match
+        List.assoc_opt _clone_on_boot_key response.Xapi_storage.Control.keys
+      with
+    | None ->
+        return response
+    | Some temporary ->
+        VDI.stat ~dbg ~sr ~vdi:temporary
+    )
+    >>>= fun response ->
+    choose_datapath response >>>= fun (rpc, datapath, uri) ->
+    if Datapath_plugins.supports_feature datapath _vdi_mirror_in then
+      return_data_rpc (fun () ->
+          Datapath_client.import_activate (rpc ~dbg) dbg uri domain
       )
-      >>>= fun response ->
-      choose_datapath response >>>= fun (rpc, datapath, uri) ->
-      if Datapath_plugins.supports_feature datapath _vdi_mirror_in then
-        return_data_rpc (fun () ->
-            Datapath_client.import_activate (rpc ~dbg) dbg uri domain
-        )
-      else
-        fail (Storage_interface.Errors.Unimplemented _vdi_mirror_in)
+    else
+      fail (Storage_interface.Errors.Unimplemented _vdi_mirror_in)
 
-    let get_nbd_server_impl dbg _dp sr vdi' vm' =
-      wrap
-      @@
-      let vdi = Storage_interface.Vdi.string_of vdi' in
-      let domain = Storage_interface.Vm.string_of vm' in
-      VDI.vdi_attach_common dbg sr vdi domain >>>= function
-      | response -> (
-          let _, _, _, nbds =
-            Storage_interface.implementations_of_backend
-              {
-                Storage_interface.implementations=
-                  List.map convert_implementation
-                    response.Xapi_storage.Data.implementations
-              }
-          in
-          match nbds with
-          | ({uri} as nbd) :: _ ->
-              info (fun m ->
-                  m "%s qemu-dp nbd server address is %s" __FUNCTION__ uri
+  let get_nbd_server_impl dbg _dp sr vdi' vm' =
+    wrap
+    @@
+    let vdi = Storage_interface.Vdi.string_of vdi' in
+    let domain = Storage_interface.Vm.string_of vm' in
+    VDI.vdi_attach_common dbg sr vdi domain >>>= function
+    | response -> (
+        let _, _, _, nbds =
+          Storage_interface.implementations_of_backend
+            {
+              Storage_interface.implementations=
+                List.map convert_implementation
+                  response.Xapi_storage.Data.implementations
+            }
+        in
+        match nbds with
+        | ({uri} as nbd) :: _ ->
+            info (fun m ->
+                m "%s qemu-dp nbd server address is %s" __FUNCTION__ uri
+            )
+            >>= fun () ->
+            let socket, _export = Storage_interface.parse_nbd_uri nbd in
+            return socket
+        | _ ->
+            fail (backend_error "No nbd server found" [])
+      )
+end
+
+module MIRROR = struct
+  (** remove a file, but doesn't raise an exception if the file is already removed *)
+  (* let unlink_safe file =
+       Lwt.catch
+         (fun () -> Lwt_unix.unlink file)
+         (function (*Unix.Unix_error (Unix.ENOENT, _, _)*) _ -> Lwt.return_unit)
+
+     (** create a directory but doesn't raise an exception if the directory already exist *)
+     let mkdir_safe dir perm =
+       Lwt.catch
+         (fun () -> Lwt_unix.mkdir dir perm)
+         (function
+           | Unix.Unix_error (Unix.EEXIST, _, _) ->
+               Lwt.return_unit
+           | e ->
+               Lwt.fail e
+           ) *)
+
+  (** create a directory, and create parent if doesn't exist *)
+  (* let mkdir_rec dir perm =
+       let rec p_mkdir dir =
+         let p_name = Filename.dirname dir in
+         ( if p_name <> "/" && p_name <> "." then
+             p_mkdir p_name
+           else
+             Lwt.return_unit
+         )
+         >>= fun () -> mkdir_safe dir perm
+       in
+       p_mkdir dir
+
+     let open_unix_domain_sock () =
+       Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0
+
+     let open_unix_domain_socket_server path =
+       mkdir_rec (Filename.dirname path) 0o755 >>= fun () ->
+       unlink_safe path >>= fun () ->
+       let sock = open_unix_domain_sock () in
+       Lwt.catch
+         (fun () ->
+           Lwt_unix.bind sock (Unix.ADDR_UNIX path) >>= fun () ->
+           Lwt_unix.listen sock 5 ; Lwt.return sock
+         )
+         (fun e -> Lwt_unix.close sock >>= fun () -> Lwt.fail e) *)
+
+  (* let export_nbd_proxy ~remote_url ~vm ~sr ~vdi ~dp ~verify_dest =
+     let* () =
+       info (fun m -> m "%s spawning exporting nbd proxy" __FUNCTION__)
+     in
+     let path =
+       Printf.sprintf "/var/run/nbdproxy/export/%s" (Vm.string_of vm)
+     in
+     open_unix_domain_socket_server path >>= fun proxy_srv ->
+     Lwt.finalize
+       (fun () ->
+         let uri =
+           Printf.sprintf "/services/SM/nbdproxy/import/%s/%s/%s/%s"
+             (Vm.string_of vm) (Sr.string_of sr) (Vdi.string_of vdi) dp
+         in
+
+         let dest_url = Http.Url.set_uri (Http.Url.of_string remote_url) uri in
+         let nbd_client, _addr = Lwt_unix.accept proxy_srv in
+         let request =
+           Cohttp.Request.make
+             ~query:(Http.Url.get_query_params dest_url)
+             ~version:"1.0" ~user_agent:"export_nbd_proxy" Http.Put uri
+         in
+         let verify_cert =
+           if verify_dest then Stunnel_client.pool () else None
+         in
+         let transport =
+           Xmlrpc_client.transport_of_url ~verify_cert dest_url
+         in
+         with_transport ~stunnel_wait_disconnect:false transport
+           (with_http request (fun (_response, s) ->
+                Unixext.proxy (Unix.dup s) (Unix.dup nbd_client)
+            )
+           )
+       )
+       (fun () -> Lwt_unix.close proxy_srv) *)
+
+  (* let send_start ~dbg ~task_id:_ ~dp ~sr ~vdi ~mirror_vm ~mirror_id:_
+       ~local_vdi:_ ~copy_vm:_ ~url ~remote_mirror ~dest_sr:_ ~verify_dest =
+     let nbd_proxy_path =
+       Printf.sprintf "/var/run/nbdproxy/export/%s" (Vm.string_of mirror_vm)
+     in
+     match remote_mirror with
+     | Mirror.Vhd_mirror _ ->
+         raise
+           (Storage_error
+              (Migration_preparation_failure
+                 "Incorrect remote mirror format for SMAPIv3"
               )
-              >>= fun () ->
-              let socket, _export = Storage_interface.parse_nbd_uri nbd in
-              return socket
-          | _ ->
-              fail (backend_error "No nbd server found" [])
+           )
+     | Mirror.QCOW2_mirror {nbd_export; _} ->
+         Lwt.catch
+           (fun () ->
+             let nbd_url =
+               Printf.sprintf "nbd+unix://%s?socket=%s" nbd_export
+                 nbd_proxy_path
+             in
+             Lwt_preemptive.detach
+               (fun () ->
+                 Storage_migrate.MigrateLocal.export_nbd_proxy ~remote_url:url
+                   ~mirror_vm ~sr ~vdi ~dp ~verify_dest
+               )
+               ()
+             >>= fun () ->
+             info (fun m ->
+                 m "%s nbd_proxy_path: %s nbd_url %s" __FUNCTION__
+                   nbd_proxy_path nbd_url
+             )
+             >>= fun () ->
+             (* TODO need to move the mirror wait to somewhere else, no need to wait it here *)
+             mirror dbg sr vdi mirror_vm nbd_url >>>= fun mirror_key ->
+             mirror_wait ~dbg ~sr ~vdi ~vm:mirror_vm mirror_key
+           )
+           (fun e ->
+             error (fun m ->
+                 m "%s some other failure: %s" __FUNCTION__
+                   (Printexc.to_string e)
+             )
+             >>= fun () ->
+             fail
+               (Storage_interface.Errors.Migration_mirror_failure
+                  (Printexc.to_string e)
+               )
+           ) *)
+
+  (* let send_start_impl dbg task_id dp sr vdi mirror_vm mirror_id local_vdi
+       copy_vm url remote_mirror dest_sr verify_dest =
+     wrap
+     @@ send_start ~dbg ~task_id ~dp ~sr ~vdi ~mirror_vm ~mirror_id ~local_vdi
+          ~copy_vm ~url ~remote_mirror ~dest_sr ~verify_dest *)
+
+  (* let receive_start_common ~dbg ~sr ~vdi_info ~id ~vm =
+       let on_fail : (unit -> (unit, Errors.error) Lwt_result.t) option ref =
+         ref None
+       in
+       ((* We drop cbt_metadata VDIs that do not have any actual data *)
+        let leaf_dp = Uuidx.(to_string (make ())) in
+        (* try *)
+        let (vdi_info : vdi_info) =
+          {vdi_info with sm_config= [("base_mirror", id)]}
+        in
+        VDI.vdi_create dbg sr vdi_info >>>= fun leaf ->
+        info (fun m ->
+            m "Created leaf VDI for mirror receive: %s" (string_of_vdi_info leaf)
         )
-  end
+        >>= fun () ->
+        on_fail := Some (fun () -> VDI.vdi_destroy dbg sr leaf.vdi) ;
+        (* dummy VDI is created so that the leaf VDI becomes a differencing disk,
+           useful for calling VDI.compose later on *)
+        VDI.vdi_attach3 dbg leaf_dp sr leaf.vdi vm true >>>= fun backend ->
+        nbd_export_of_attach_info backend
+        |> Option.to_result
+             ~none:
+               (Errors.Migration_preparation_failure
+                  (Printf.sprintf "Cannot parse nbd uri")
+               )
+        |> Lwt.return
+        >>>= fun nbd_export ->
+        VDI.vdi_activate3 dbg leaf_dp sr leaf.vdi vm >>>= fun () ->
+        return
+          (Mirror.QCOW2_mirror
+             {Mirror.mirror_vdi= leaf; mirror_datapath= leaf_dp; nbd_export}
+          )
+       )
+       >>= function
+       | Error (e : Errors.error) -> (
+           info (fun m -> m "%s Caught exception" __FUNCTION__) >>= fun () ->
+           match !on_fail with
+           | None ->
+               fail e
+           | Some c ->
+               info (fun m -> m "performing cleaning up") >>= fun () ->
+               c () >>>= fun () -> fail e
+         )
+       | Ok x ->
+           return x
+
+     let receive_start_impl = u __FUNCTION__
+
+     let receive_start2_impl dbg sr vdi_info id _similar vm =
+       receive_start_common ~dbg ~sr ~vdi_info ~id ~vm |> wrap *)
 end
 
 (* Bind the implementations *)
@@ -1898,45 +2160,44 @@ let bind ~volume_script_dir =
   S.VDI.set_content_id VDI.vdi_set_content_id_impl ;
   S.VDI.add_to_sm_config VDI.vdi_add_to_sm_config_impl ;
   S.VDI.remove_from_sm_config VDI.vdi_remove_from_sm_config_impl ;
+  S.VDI.similar_content VDI.similar_content_impl ;
 
   let module DP = DPImpl (RuntimeMeta) in
   S.DP.destroy2 DP.dp_destroy2 ;
   S.DP.attach_info DP.dp_attach_info_impl ;
 
   let module DATA = DATAImpl (RuntimeMeta) in
-  S.DATA.MIRROR.get_nbd_server DATA.MIRROR.get_nbd_server_impl ;
-  S.DATA.MIRROR.import_activate DATA.MIRROR.data_import_activate_impl ;
+  S.DATA.mirror DATA.mirror_impl ;
+  S.DATA.stat DATA.stat_impl ;
+  S.DATA.get_nbd_server DATA.get_nbd_server_impl ;
+  S.DATA.import_activate DATA.data_import_activate_impl ;
+  S.DATA.MIRROR.send_start (u "send_start") ;
+  S.DATA.MIRROR.receive_start (u "receive_start") ;
+  S.DATA.MIRROR.receive_start2 (u "receive_start2") ;
+  S.DATA.MIRROR.receive_finalize (u "DATA.MIRROR.receive_finalize") ;
+  S.DATA.MIRROR.receive_finalize2 (u "DATA.MIRROR.receive_finalize2") ;
+  S.DATA.MIRROR.receive_cancel (u "DATA.MIRROR.receive_cancel") ;
+  S.DATA.MIRROR.receive_cancel2 (u "DATA.MIRROR.receive_cancel2") ;
 
-  let u name _ = failwith ("Unimplemented: " ^ name) in
   S.get_by_name (u "get_by_name") ;
   S.VDI.get_by_name (u "VDI.get_by_name") ;
-  S.DATA.MIRROR.receive_start (u "DATA.MIRROR.receive_start") ;
-  S.DATA.MIRROR.receive_start2 (u "DATA.MIRROR.receive_start2") ;
   S.UPDATES.get (u "UPDATES.get") ;
   S.SR.update_snapshot_info_dest (u "SR.update_snapshot_info_dest") ;
-  S.DATA.MIRROR.list (u "DATA.MIRROR.list") ;
   S.TASK.stat (u "TASK.stat") ;
   S.DP.diagnostics (u "DP.diagnostics") ;
   S.TASK.destroy (u "TASK.destroy") ;
   S.DP.destroy (u "DP.destroy") ;
-  S.VDI.similar_content (u "VDI.similar_content") ;
   S.DATA.copy (u "DATA.copy") ;
   S.DP.stat_vdi (u "DP.stat_vdi") ;
-  S.DATA.MIRROR.receive_finalize (u "DATA.MIRROR.receive_finalize") ;
-  S.DATA.MIRROR.receive_finalize2 (u "DATA.MIRROR.receive_finalize2") ;
   S.DP.create (u "DP.create") ;
   S.TASK.cancel (u "TASK.cancel") ;
   S.VDI.attach (u "VDI.attach") ;
   S.VDI.attach2 (u "VDI.attach2") ;
   S.VDI.activate (u "VDI.activate") ;
-  S.DATA.MIRROR.stat (u "DATA.MIRROR.stat") ;
   S.TASK.list (u "TASK.list") ;
   S.VDI.get_url (u "VDI.get_url") ;
-  S.DATA.MIRROR.start (u "DATA.MIRROR.start") ;
   S.Policy.get_backend_vm (u "Policy.get_backend_vm") ;
-  S.DATA.MIRROR.receive_cancel (u "DATA.MIRROR.receive_cancel") ;
   S.SR.update_snapshot_info_src (u "SR.update_snapshot_info_src") ;
-  S.DATA.MIRROR.stop (u "DATA.MIRROR.stop") ;
   Rpc_lwt.server S.implementation
 
 let process_smapiv2_requests server txt =

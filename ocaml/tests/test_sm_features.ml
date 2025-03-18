@@ -249,6 +249,7 @@ module CreateSMObject = Generic.MakeStateful (struct
       ; features
       ; configuration= []
       ; required_cluster_stack= []
+      ; migrate_version= Smapiv2
       }
 
   let extract_output __context _ =

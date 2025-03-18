@@ -1047,7 +1047,7 @@ let use_xmlrpc = ref true
 
 let compress_tracing_files = ref true
 
-let prefer_nbd_attach = ref false
+let prefer_nbd_attach = ref true
 
 (** 1 MiB *)
 let max_observer_file_size = ref (1 lsl 20)

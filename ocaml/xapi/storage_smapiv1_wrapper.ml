@@ -420,9 +420,7 @@ functor
                   Impl.VDI.activate3 context ~dbg ~dp ~sr ~vdi ~vm ;
                   vdi_t
               | Vdi_automaton.Deactivate ->
-                  Storage_migrate.pre_deactivate_hook ~dbg ~dp ~sr ~vdi ;
                   Impl.VDI.deactivate context ~dbg ~dp ~sr ~vdi ~vm ;
-                  Storage_migrate.post_deactivate_hook ~sr ~vdi ~dp ;
                   vdi_t
               | Vdi_automaton.Detach ->
                   Impl.VDI.detach context ~dbg ~dp ~sr ~vdi ~vm ;
@@ -1104,14 +1102,17 @@ functor
         let dp_state = Vdi.get_dp_state dp vdi_state in
         debug "Looking for dp: %s" dp ;
         match (dp_state, vdi_state.Vdi.attach_info) with
-        | Vdi_automaton.Activated _, Some attach_info ->
+        | ( (Vdi_automaton.Attached _ | Vdi_automaton.Activated _)
+          , Some attach_info ) ->
             attach_info
         | _ ->
             raise
               (Storage_error
                  (Internal_error
-                    (Printf.sprintf "sr: %s vdi: %s Datapath %s not attached"
+                    (Printf.sprintf
+                       "sr: %s vdi: %s Datapath %s not attached, but is %s"
                        (s_of_sr sr) (s_of_vdi vdi) dp
+                       (Vdi_automaton.string_of_state dp_state)
                     )
                  )
               )
@@ -1134,105 +1135,6 @@ functor
                       (Vdi.dp vdi_t)
                 }
         )
-    end
-
-    module DATA = struct
-      let copy context ~dbg ~sr ~vdi ~vm ~url ~dest =
-        info "DATA.copy dbg:%s sr:%s vdi:%s url:%s dest:%s" dbg (s_of_sr sr)
-          (s_of_vdi vdi) url (s_of_sr dest) ;
-        Impl.DATA.copy context ~dbg ~sr ~vdi ~vm ~url ~dest
-
-      module MIRROR = struct
-        let start context ~dbg ~sr ~vdi ~dp ~mirror_vm ~copy_vm ~url ~dest =
-          info "DATA.MIRROR.start dbg:%s sr:%s vdi:%s url:%s dest:%s" dbg
-            (s_of_sr sr) (s_of_vdi vdi) url (s_of_sr dest) ;
-          Impl.DATA.MIRROR.start context ~dbg ~sr ~vdi ~dp ~mirror_vm ~copy_vm
-            ~url ~dest
-
-        let stop context ~dbg ~id =
-          info "DATA.MIRROR.stop dbg:%s id:%s" dbg id ;
-          Impl.DATA.MIRROR.stop context ~dbg ~id
-
-        let list context ~dbg =
-          info "DATA.MIRROR.active dbg:%s" dbg ;
-          Impl.DATA.MIRROR.list context ~dbg
-
-        let stat context ~dbg ~id =
-          info "DATA.MIRROR.stat dbg:%s id:%s" dbg id ;
-          Impl.DATA.MIRROR.stat context ~dbg ~id
-
-        let receive_start context ~dbg ~sr ~vdi_info ~id ~similar =
-          info "DATA.MIRROR.receive_start dbg:%s sr:%s id:%s similar:[%s]" dbg
-            (s_of_sr sr) id
-            (String.concat "," similar) ;
-          Impl.DATA.MIRROR.receive_start context ~dbg ~sr ~vdi_info ~id ~similar
-
-        let receive_start2 context ~dbg ~sr ~vdi_info ~id ~similar ~vm =
-          info
-            "DATA.MIRROR.receive_start2 dbg:%s sr:%s id:%s similar:[%s] vm:%s"
-            dbg (s_of_sr sr) id
-            (String.concat "," similar)
-            (s_of_vm vm) ;
-          Impl.DATA.MIRROR.receive_start2 context ~dbg ~sr ~vdi_info ~id
-            ~similar ~vm
-
-        let receive_finalize context ~dbg ~id =
-          info "DATA.MIRROR.receive_finalize dbg:%s id:%s" dbg id ;
-          Impl.DATA.MIRROR.receive_finalize context ~dbg ~id
-
-        let receive_finalize2 context ~dbg ~id =
-          info "DATA.MIRROR.receive_finalize2 dbg:%s id:%s" dbg id ;
-          Impl.DATA.MIRROR.receive_finalize2 context ~dbg ~id
-
-        let receive_cancel context ~dbg ~id =
-          info "DATA.MIRROR.receive_cancel dbg:%s id:%s" dbg id ;
-          Impl.DATA.MIRROR.receive_cancel context ~dbg ~id
-
-        (* tapdisk supports three kind of nbd servers, the old style nbdserver,
-           the new style nbd server and a real nbd server. The old and new style nbd servers
-           are "special" nbd servers that accept fds passed via SCM_RIGHTS and handle
-           connection based on that fd. The real nbd server is a "normal" nbd server
-           that accepts nbd connections from nbd clients, and it does not support fd
-           passing. *)
-        let get_nbd_server_common context ~dbg ~dp ~sr ~vdi ~vm ~style =
-          info "%s DATA.MIRROR.get_nbd_server dbg:%s dp:%s sr:%s vdi:%s vm:%s"
-            __FUNCTION__ dbg dp (s_of_sr sr) (s_of_vdi vdi) (s_of_vm vm) ;
-          let attach_info =
-            DP.attach_info context ~dbg:"nbd" ~sr ~vdi ~dp ~vm
-          in
-          match Storage_migrate.tapdisk_of_attach_info attach_info with
-          | Some tapdev ->
-              let minor = Tapctl.get_minor tapdev in
-              let pid = Tapctl.get_tapdisk_pid tapdev in
-              let path =
-                match style with
-                | `newstyle ->
-                    Printf.sprintf "/var/run/blktap-control/nbdserver-new%d.%d"
-                      pid minor
-                | `oldstyle ->
-                    Printf.sprintf "/var/run/blktap-control/nbdserver%d.%d" pid
-                      minor
-                | `real ->
-                    Printf.sprintf "/var/run/blktap-control/nbd%d.%d" pid minor
-              in
-              debug "%s nbd server path is %s" __FUNCTION__ path ;
-              path
-          | None ->
-              raise
-                (Storage_interface.Storage_error
-                   (Backend_error
-                      ( Api_errors.internal_error
-                      , ["No tapdisk attach info found"]
-                      )
-                   )
-                )
-
-        let import_activate context ~dbg ~dp ~sr ~vdi ~vm =
-          get_nbd_server_common context ~dbg ~dp ~sr ~vdi ~vm ~style:`oldstyle
-
-        let get_nbd_server context ~dbg ~dp ~sr ~vdi ~vm =
-          get_nbd_server_common context ~dbg ~dp ~sr ~vdi ~vm ~style:`real
-      end
     end
 
     module SR = struct
@@ -1455,6 +1357,111 @@ functor
         let dbg = Debug_info.to_string di in
         Impl.SR.update_snapshot_info_dest context ~dbg ~sr ~vdi ~src_vdi
           ~snapshot_pairs
+    end
+
+    module DATA = struct
+      let u x = raise Storage_interface.(Storage_error (Errors.Unimplemented x))
+
+      let copy _context ~dbg:_ ~sr:_ ~vdi:_ ~vm:_ ~url:_ ~dest:_ =
+        u "DATA.copy" (* See storage_migrate.ml *)
+
+      let mirror _context ~dbg:_ ~sr:_ ~vdi:_ ~vm:_ ~dest:_ = u "DATA.mirror"
+
+      let stat _context ~dbg:_ ~sr:_ ~vdi:_ ~vm:_ ~key:_ = u "DATA.stat"
+
+      (* tapdisk supports three kind of nbd servers, the old style nbdserver,
+         the new style nbd server and a real nbd server. The old and new style nbd servers
+         are "special" nbd servers that accept fds passed via SCM_RIGHTS and handle
+         connection based on that fd. The real nbd server is a "normal" nbd server
+         that accepts nbd connections from nbd clients, and it does not support fd
+         passing. *)
+      let get_nbd_server_common context ~dbg ~dp ~sr ~vdi ~vm ~style =
+        info "%s DATA.MIRROR.get_nbd_server dbg:%s dp:%s sr:%s vdi:%s vm:%s"
+          __FUNCTION__ dbg dp (s_of_sr sr) (s_of_vdi vdi) (s_of_vm vm) ;
+        let attach_info = DP.attach_info context ~dbg:"nbd" ~sr ~vdi ~dp ~vm in
+        match Storage_smapiv1_migrate.tapdisk_of_attach_info attach_info with
+        | Some tapdev ->
+            let minor = Tapctl.get_minor tapdev in
+            let pid = Tapctl.get_tapdisk_pid tapdev in
+            let path =
+              match style with
+              | `newstyle ->
+                  Printf.sprintf "/var/run/blktap-control/nbdserver-new%d.%d"
+                    pid minor
+              | `oldstyle ->
+                  Printf.sprintf "/var/run/blktap-control/nbdserver%d.%d" pid
+                    minor
+              | `real ->
+                  Printf.sprintf "/var/run/blktap-control/nbd%d.%d" pid minor
+            in
+            debug "%s nbd server path is %s" __FUNCTION__ path ;
+            path
+        | None ->
+            raise
+              (Storage_interface.Storage_error
+                 (Backend_error
+                    (Api_errors.internal_error, ["No tapdisk attach info found"])
+                 )
+              )
+
+      let import_activate context ~dbg ~dp ~sr ~vdi ~vm =
+        get_nbd_server_common context ~dbg ~dp ~sr ~vdi ~vm ~style:`oldstyle
+
+      let get_nbd_server context ~dbg ~dp ~sr ~vdi ~vm =
+        get_nbd_server_common context ~dbg ~dp ~sr ~vdi ~vm ~style:`real
+
+      module MIRROR = struct
+        let start _context ~dbg:_ ~sr:_ ~vdi:_ ~dp:_ ~mirror_vm:_ ~copy_vm:_
+            ~live_vm:_ ~url:_ ~dest:_ =
+          u "DATA.MIRROR.start"
+
+        let stop context ~dbg ~id =
+          info "DATA.MIRROR.stop dbg:%s id:%s" dbg id ;
+          Impl.DATA.MIRROR.stop context ~dbg ~id
+
+        let list context ~dbg =
+          info "DATA.MIRROR.active dbg:%s" dbg ;
+          Impl.DATA.MIRROR.list context ~dbg
+
+        let stat context ~dbg ~id =
+          info "DATA.MIRROR.stat dbg:%s id:%s" dbg id ;
+          Impl.DATA.MIRROR.stat context ~dbg ~id
+
+        let is_mirror_failed _context ~dbg:_ ~mirror_id:_ ~sr:_ =
+          u "MIRROR.is_mirror_failed"
+
+        let pre_deactivate_hook _context ~dbg:_ = u "pre_deactivate_hook"
+
+        let send_start _ctx ~dbg:_ ~task_id:_ ~dp:_ ~sr:_ ~vdi:_ ~mirror_vm:_
+            ~mirror_id:_ ~local_vdi:_ ~copy_vm:_ ~live_vm:_ ~url:_
+            ~remote_mirror:_ ~dest_sr:_ ~verify_dest:_ =
+          u "DATA.MIRROR.send_start"
+
+        let receive_start2 _context ~dbg:_ ~sr:_ ~vdi_info:_ ~mirror_id:_
+            ~similar:_ ~vm:_ ~url:_ ~verify_dest:_ =
+          u "DATA.MIRROR.receive_start2"
+
+        let receive_start _context ~dbg:_ ~sr:_ ~vdi_info:_ ~id:_ ~similar:_ =
+          u "DATA.MIRROR.receive_start"
+
+        let receive_finalize context ~dbg ~id =
+          info "DATA.MIRROR.receive_finalize dbg:%s id:%s" dbg id ;
+          Impl.DATA.MIRROR.receive_finalize context ~dbg ~id
+
+        let receive_finalize2 context ~dbg ~mirror_id =
+          info "DATA.MIRROR.receive_finalize2 dbg:%s id:%s" dbg mirror_id ;
+          Impl.DATA.MIRROR.receive_finalize2 context ~dbg ~mirror_id
+
+        let receive_cancel context ~dbg ~id =
+          info "DATA.MIRROR.receive_cancel dbg:%s id:%s" dbg id ;
+          Impl.DATA.MIRROR.receive_cancel context ~dbg ~id
+
+        let receive_cancel2 context ~dbg ~id ~url ~verify_dest =
+          info
+            "DATA.MIRROR.receive_cancel2 dbg:%s id:%s url: %s verify_dest: %B"
+            dbg id url verify_dest ;
+          Impl.DATA.MIRROR.receive_cancel2 context ~dbg ~id ~url ~verify_dest
+      end
     end
 
     module Policy = struct

@@ -1,3 +1,5 @@
+module D = Debug.Make (struct let name = __MODULE__ end)
+
 module Unixext = Xapi_stdext_unix.Unixext
 
 let update_ferpc_env tracing (ferpc : Fe.ferpc) : Fe.ferpc =
